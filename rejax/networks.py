@@ -254,6 +254,15 @@ class VNetwork(MLP):
         return nn.Dense(1)(x).squeeze(1)
 
 
+class VQuantileNetwork(MLP):
+    num_quantiles: int = 200
+
+    @nn.compact
+    def __call__(self, obs):
+        x = super().__call__(obs)
+        return nn.Dense(self.num_quantiles)(x).squeeze()
+
+
 class QNetwork(MLP):
     @nn.compact
     def __call__(self, obs, action):
