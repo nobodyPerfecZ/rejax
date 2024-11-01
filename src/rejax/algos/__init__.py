@@ -1,4 +1,5 @@
 from .algorithm import Algorithm
+from .dppo import DPPO
 from .dqn import DQN
 from .iqn import IQN
 from .mixins import (
@@ -15,6 +16,7 @@ from .td3 import TD3
 
 __all__ = [
     "Algorithm",
+    "DPPO",
     "DQN",
     "IQN",
     "PPO",
