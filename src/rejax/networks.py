@@ -260,7 +260,7 @@ class VQuantileNetwork(MLP):
     @nn.compact
     def __call__(self, obs):
         x = super().__call__(obs)
-        return nn.Dense(self.num_quantiles)(x).squeeze()
+        return nn.Dense(self.num_quantiles)(x)
 
 
 class QNetwork(MLP):
@@ -269,6 +269,16 @@ class QNetwork(MLP):
         x = jnp.concatenate([obs.reshape(obs.shape[0], -1), action], axis=-1)
         x = super().__call__(x)
         return nn.Dense(1)(x).squeeze(1)
+
+
+class QQuantileNetwork(MLP):
+    num_quantiles: int = 200
+
+    @nn.compact
+    def __call__(self, obs, action):
+        x = jnp.concatenate([obs.reshape(obs.shape[0], -1), action], axis=-1)
+        x = super().__call__(x)
+        return nn.Dense(self.num_quantiles)(x)
 
 
 class DiscreteQNetwork(MLP):
@@ -282,6 +292,22 @@ class DiscreteQNetwork(MLP):
     def take(self, obs, action):
         q_values = self(obs)
         return jnp.take_along_axis(q_values, action[:, None], axis=1).squeeze(1)
+
+
+class DiscreteQQuantileNetwork(MLP):
+    action_dim: int
+    num_quantiles: int = 200
+
+    @nn.compact
+    def __call__(self, obs):
+        x = super().__call__(obs)
+        return nn.Dense(self.action_dim * self.num_quantiles)(x).reshape(
+            -1, self.action_dim, self.num_quantiles
+        )
+
+    def take(self, obs, action):
+        q_values = self(obs)
+        return jnp.take_along_axis(q_values, action[:, None, None], axis=1).squeeze(1)
 
 
 class DuelingQNetwork(nn.Module):
