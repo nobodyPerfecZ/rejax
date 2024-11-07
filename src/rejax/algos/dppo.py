@@ -11,9 +11,85 @@ from rejax.networks import DiscretePolicy, GaussianPolicy, VQuantileNetwork
 from .ppo import PPO, AdvantageMinibatch, Trajectory
 
 
+def kurtosis(
+    x: chex.Array,
+    fisher: bool = True,
+    axis: int | None = None,
+    keepdims: bool = False,
+) -> chex.Array:
+    """
+    Computes the kurtosis (Fisher or Pearson) along the specified axis.
+
+    Args:
+        x (chex.Array):
+            Array of shape (?, ...)
+
+        fisher (bool):
+            Controls whether to normalize the kurtosis to the normal distribution
+
+        axis (int, optional):
+            Axis or axes along which the kurtosis is computed
+
+        keepdims (bool):
+            Controls whether to keep the dimension of x
+
+    Returns:
+        chex.Array:
+            Array of shape (?, ...)
+            The kurtosis along the specified axis
+    """
+    # Compute mean and standard deviation along the given axis
+    mean = jnp.mean(x, axis=axis, keepdims=True)
+    std = jnp.std(x, axis=axis, keepdims=True)
+
+    # Compute the kurtosis as the fourth central moment divided by the square of the variance
+    kurt = jnp.mean(((x - mean) / (std + 1e-10)) ** 4, axis=axis, keepdims=keepdims)
+
+    if fisher is True:
+        # Case: Normalize according to the normal distribution
+        # Fisher (normal ==> 0.0)
+        # Pearson (normal ==> 3.0)
+        kurt = kurt - 3
+
+    return kurt
+
+
+def skewness(
+    x: chex.Array,
+    axis: int | None = None,
+    keepdims: bool = False,
+) -> chex.Array:
+    """
+    Computes the skewness along the specified axis.
+
+    Args:
+        x (chex.Array):
+            Array of shape (?, ...)
+
+        axis (int, optional):
+            Axis or axes along which the kurtosis is computed
+
+        keepdims (bool):
+            Controls whether to keep the dimension of x
+
+    Returns:
+        chex.Array:
+            Array of shape (?, ...)
+            The second pearson coefficient of skewness along the specified axis
+    """
+    # Compute mean and standard deviation along the given axis
+    mean = jnp.mean(x, axis=axis, keepdims=True)
+    std = jnp.std(x, axis=axis, keepdims=True)
+
+    # Compute the skewness as the third central moment divided by the square of the variance
+    skew = jnp.mean(((x - mean) / (std + 1e-10)) ** 3, axis=axis, keepdims=keepdims)
+
+    return skew
+
+
 class DPPO(PPO):
-    sr_lambda: chex.Scalar = struct.field(pytree_node=True, default=0.95)
     alpha: chex.Scalar = struct.field(pytree_node=True, default=0.0)
+    sr_lambda: chex.Scalar = struct.field(pytree_node=True, default=0.95)
 
     @classmethod
     def create_agent(cls, config, env, env_params):
@@ -222,3 +298,102 @@ class DPPO(PPO):
             distortion = distorted_tau[1:] - distorted_tau[:-1]
             sorted_quantiles = jnp.sort(quantiles, axis=-1)
             return jnp.sum(distortion * sorted_quantiles, axis=-1)
+
+
+class DPPOKurt(DPPO):
+    kurtosis_coef: chex.Scalar = struct.field(pytree_node=True, default=1e-4)
+
+    def calculate_gae(self, ts, trajectories, last_val):
+        def get_advantages(runner_state, transition):
+            ts, gae, next_value, next_value_quants = runner_state
+
+            done, value_quants, reward = (
+                transition.done,
+                transition.value,
+                transition.reward.squeeze(),
+            )
+            value = self.risk_measure(value_quants)
+
+            delta = reward + self.gamma * next_value * (1 - done) - value
+            gae = delta + self.gamma * self.gae_lambda * (1 - done) * gae
+
+            target_value_quants = (
+                reward[:, jnp.newaxis]
+                + self.gamma * (1 - done)[:, jnp.newaxis] * next_value_quants
+            )
+
+            rng, new_rng = jax.random.split(ts.rng)
+            ts = ts.replace(rng=rng)
+            condition = (1 - done)[:, jnp.newaxis] * (
+                jax.random.uniform(new_rng, next_value_quants.shape) < self.sr_lambda
+            )
+            next_value_quants = jnp.where(condition, target_value_quants, value_quants)
+
+            runner_state = (ts, gae, value, next_value_quants)
+            metrics = (gae, target_value_quants)
+
+            return runner_state, metrics
+
+        last_val_risk = self.risk_measure(last_val)
+        runner_state, metrics = jax.lax.scan(
+            get_advantages,
+            (ts, jnp.zeros(last_val.shape[:-1]), last_val_risk, last_val),
+            trajectories,
+            reverse=True,
+        )
+        ts = runner_state[0]
+        advantages, targets = metrics
+        advantages = advantages + self.kurtosis_coef * -kurtosis(
+            advantages, axis=-1, keepdims=True
+        )
+        return ts, advantages, targets
+
+
+class DPPOSkew(DPPO):
+    skewness_coef: chex.Scalar = struct.field(pytree_node=True, default=1e-3)
+
+    def calculate_gae(self, ts, trajectories, last_val):
+        def get_advantages(runner_state, transition):
+            ts, gae, next_value, next_value_quants = runner_state
+
+            done, value_quants, reward = (
+                transition.done,
+                transition.value,
+                transition.reward.squeeze(),
+            )
+            value = self.risk_measure(value_quants)
+
+            delta = reward + self.gamma * next_value * (1 - done) - value
+            gae = delta + self.gamma * self.gae_lambda * (1 - done) * gae
+
+            target_value_quants = (
+                reward[:, jnp.newaxis]
+                + self.gamma * (1 - done)[:, jnp.newaxis] * next_value_quants
+            )
+
+            rng, new_rng = jax.random.split(ts.rng)
+            ts = ts.replace(rng=rng)
+            condition = (1 - done)[:, jnp.newaxis] * (
+                jax.random.uniform(new_rng, next_value_quants.shape) < self.sr_lambda
+            )
+            next_value_quants = jnp.where(condition, target_value_quants, value_quants)
+
+            runner_state = (ts, gae, value, next_value_quants)
+            metrics = (gae, target_value_quants)
+
+            return runner_state, metrics
+
+        last_val_risk = self.risk_measure(last_val)
+        runner_state, metrics = jax.lax.scan(
+            get_advantages,
+            (ts, jnp.zeros(last_val.shape[:-1]), last_val_risk, last_val),
+            trajectories,
+            reverse=True,
+        )
+        ts = runner_state[0]
+        advantages, targets = metrics
+        advantages = advantages + self.skewness_coef * -skewness(
+            advantages, axis=-1, keepdims=True
+        )
+
+        return ts, advantages, targets

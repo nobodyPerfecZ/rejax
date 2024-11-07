@@ -1,7 +1,22 @@
-from rejax.algos import DPPO, DQN, IQN, PPO, PQN, SAC, TD3, Algorithm
+from rejax.algos import (
+    DPPO,
+    DQN,
+    IQN,
+    PPO,
+    PQN,
+    SAC,
+    TD3,
+    Algorithm,
+    DPPOKurt,
+    DPPOSkew,
+    PPOCVaRRejectionSampling,
+)
 
 _algos = {
+    "crs_ppo": PPOCVaRRejectionSampling,
     "dppo": DPPO,
+    "dppo_kurtosis": DPPOKurt,
+    "dppo_skew": DPPOSkew,
     "dqn": DQN,
     "iqn": IQN,
     "ppo": PPO,
@@ -22,7 +37,11 @@ __all__ = [
     "DQN",
     "IQN",
     "PPO",
+    "PPOCVaRRejectionSampling",
     "PQN",
     "SAC",
     "TD3",
+    "DPPO",
+    "DPPOKurt",
+    "DPPOSkew",
 ]
