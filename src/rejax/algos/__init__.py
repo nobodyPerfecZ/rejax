@@ -2,6 +2,7 @@ from .algorithm import Algorithm
 from .crs import PPOCVaRRejectionSampling
 from .dppo import DPPO, DPPOKurt, DPPOSkew
 from .dqn import DQN
+from .dsac import DSAC
 from .iqn import IQN
 from .mixins import (
     EpsilonGreedyMixin,
@@ -21,6 +22,7 @@ __all__ = [
     "DPPOKurt",
     "DPPOSkew",
     "DQN",
+    "DSAC",
     "IQN",
     "PPO",
     "PPOCVaRRejectionSampling",

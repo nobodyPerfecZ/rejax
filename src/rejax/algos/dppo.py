@@ -90,6 +90,7 @@ def skewness(
 class DPPO(PPO):
     alpha: chex.Scalar = struct.field(pytree_node=True, default=0.0)
     sr_lambda: chex.Scalar = struct.field(pytree_node=True, default=0.95)
+    kappa: chex.Scalar = struct.field(pytree_node=True, default=0.2)
 
     @classmethod
     def create_agent(cls, config, env, env_params):
@@ -231,58 +232,8 @@ class DPPO(PPO):
     def update_critic(self, ts, batch):
         def critic_loss_fn(params):
             predictions = self.critic.apply(params, batch.trajectories.obs)
-            predictions_collected = batch.trajectories.value
             targets = batch.targets
-            num_minibatches, num_quantiles = predictions.shape
-            tau_hat = jnp.linspace(
-                start=1 / (2 * num_quantiles),
-                stop=1 - 1 / (2 * num_quantiles),
-                num=num_quantiles,
-                endpoint=True,
-            )
-            predictions = jnp.repeat(
-                jnp.expand_dims(predictions, axis=0),
-                num_quantiles,
-                axis=0,
-            )
-            predictions_collected = jnp.repeat(
-                jnp.expand_dims(predictions_collected, axis=0),
-                num_quantiles,
-                axis=0,
-            )
-            targets = jnp.repeat(
-                jnp.expand_dims(jnp.transpose(targets), axis=-1),
-                num_quantiles,
-                axis=-1,
-            )
-            tau_hat = jnp.repeat(
-                jnp.expand_dims(tau_hat, axis=0),
-                num_minibatches,
-                axis=0,
-            )
-            delta = targets - predictions
-
-            # CLIPPED LOSS
-            delta_clipped = (
-                predictions_collected
-                + (predictions - predictions_collected).clip(
-                    -self.clip_eps, +self.clip_eps
-                )
-            ) - targets
-            value_losses_clipped = jnp.square(delta_clipped)
-
-            # NORMAL LOSS
-            delta = predictions - targets
-            value_losses = jnp.square(delta)
-
-            # CLIPPED L2 LOSS
-            clipped_l2_loss = 0.5 * jnp.maximum(value_losses, value_losses_clipped)
-
-            # QUANTILE CLIPPED L2 LOSS
-            value_loss = (
-                jnp.abs(jnp.where(delta < 0, (tau_hat - 1), tau_hat)) * clipped_l2_loss
-            ).mean()
-            return self.vf_coef * value_loss
+            return self.quantile_huber_loss(predictions, targets)
 
         grads = jax.grad(critic_loss_fn)(ts.critic_ts.params)
         return ts.replace(critic_ts=ts.critic_ts.apply_gradients(grads=grads))
@@ -298,6 +249,33 @@ class DPPO(PPO):
             distortion = distorted_tau[1:] - distorted_tau[:-1]
             sorted_quantiles = jnp.sort(quantiles, axis=-1)
             return jnp.sum(distortion * sorted_quantiles, axis=-1)
+
+    def quantile_huber_loss(self, predictions, targets):
+        _, num_quantiles = predictions.shape
+        tau_hat = jnp.linspace(
+            start=1 / (2 * num_quantiles),
+            stop=1 - 1 / (2 * num_quantiles),
+            num=num_quantiles,
+            endpoint=True,
+        )
+        predictions = jnp.expand_dims(predictions, axis=-1)
+        targets = jnp.expand_dims(targets, axis=1)
+        tau_hat = jnp.expand_dims(tau_hat, axis=[0, -1])
+
+        delta = targets - predictions
+        delta_abs = jnp.abs(delta)
+
+        # HUBER LOSS
+        huber_loss = jnp.where(
+            delta_abs < self.kappa,
+            0.5 * jnp.square(delta),
+            self.kappa * (delta_abs - 0.5 * self.kappa),
+        )
+
+        # QUANTILE HUBER LOSS
+        loss = jnp.abs(jnp.where(delta < 0, (tau_hat - 1), tau_hat)) * huber_loss
+
+        return loss.mean()
 
 
 class DPPOKurt(DPPO):
