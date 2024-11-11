@@ -56,11 +56,14 @@ class PQN(OnPolicyMixin, EpsilonGreedyMixin, NormalizeObservationsMixin, Algorit
     @classmethod
     def create_agent(cls, config, env, env_params):
         agent_kwargs = config.pop("agent_kwargs", {})
-        agent_kwargs["activation"] = lambda x: nn.relu(nn.LayerNorm()(x))
+        activation = lambda x: nn.relu(nn.LayerNorm()(x))
 
         action_dim = env.action_space(env_params).n
         agent = EpsilonGreedyPolicy(DiscreteQNetwork)(
-            hidden_layer_sizes=(64, 64), action_dim=action_dim, **agent_kwargs
+            hidden_layer_sizes=(64, 64),
+            action_dim=action_dim,
+            activation=activation,
+            **agent_kwargs
         )
         return {"agent": agent}
 

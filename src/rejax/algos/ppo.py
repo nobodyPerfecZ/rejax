@@ -55,21 +55,26 @@ class PPO(OnPolicyMixin, NormalizeObservationsMixin, Algorithm):
 
         agent_kwargs = config.pop("agent_kwargs", {})
         activation = agent_kwargs.pop("activation", "swish")
-        agent_kwargs["activation"] = getattr(nn, activation)
+        activation = getattr(nn, activation)
 
         hidden_layer_sizes = agent_kwargs.pop("hidden_layer_sizes", (64, 64))
         agent_kwargs["hidden_layer_sizes"] = tuple(hidden_layer_sizes)
 
         if discrete:
-            actor = DiscretePolicy(action_space.n, **agent_kwargs)
+            actor = DiscretePolicy(
+                action_dim=action_space.n,
+                activation=activation,
+                **agent_kwargs,
+            )
         else:
             actor = GaussianPolicy(
-                np.prod(action_space.shape),
-                (action_space.low, action_space.high),
+                action_dim=np.prod(action_space.shape),
+                action_range=(action_space.low, action_space.high),
+                activation=activation,
                 **agent_kwargs,
             )
 
-        critic = VNetwork(**agent_kwargs)
+        critic = VNetwork(activation=activation, **agent_kwargs)
         return {"actor": actor, "critic": critic}
 
     @register_init

@@ -49,11 +49,14 @@ class DQN(
         }[agent_name]
         agent_kwargs = config.pop("agent_kwargs", {})
         activation = agent_kwargs.pop("activation", "swish")
-        agent_kwargs["activation"] = getattr(nn, activation)
+        activation = getattr(nn, activation)
 
         action_dim = env.action_space(env_params).n
         agent = EpsilonGreedyPolicy(agent_cls)(
-            hidden_layer_sizes=(64, 64), action_dim=action_dim, **agent_kwargs
+            hidden_layer_sizes=(64, 64),
+            action_dim=action_dim,
+            activation=activation,
+            **agent_kwargs
         )
 
         return {"agent": agent}

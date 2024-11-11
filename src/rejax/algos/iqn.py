@@ -65,13 +65,15 @@ class IQN(
     def create_agent(cls, config, env, env_params):
         agent_kwargs = config.pop("agent_kwargs", {})
         activation = agent_kwargs.pop("activation", "swish")
-        agent_kwargs["activation"] = getattr(nn, activation)
+        activation = getattr(nn, activation)
         hidden_layer_sizes = agent_kwargs.pop("hidden_layer_sizes", (64, 64))
         agent_kwargs["hidden_layer_sizes"] = tuple(hidden_layer_sizes)
 
         action_dim = env.action_space(env_params).n
         agent = EpsilonGreedyPolicy(ImplicitQuantileNetwork)(
-            action_dim=action_dim, **agent_kwargs
+            action_dim=action_dim,
+            activation=activation,
+            **agent_kwargs,
         )
         return {"agent": agent}
 

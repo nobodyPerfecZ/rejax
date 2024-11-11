@@ -51,22 +51,31 @@ class SAC(
     def create_agent(cls, config, env, env_params):
         agent_kwargs = config.pop("agent_kwargs", {})
         activation = agent_kwargs.pop("activation", "relu")
-        agent_kwargs["activation"] = getattr(nn, activation)
+        activation = getattr(nn, activation)
         layers = config.pop("hidden_layer_sizes", (64, 64))
         agent_kwargs["hidden_layer_sizes"] = tuple(layers)
 
         action_space = env.action_space(env_params)
         if isinstance(action_space, gymnax.environments.spaces.Discrete):
-            actor = DiscretePolicy(action_space.n, **agent_kwargs)
-            critic = DiscreteQNetwork(action_dim=action_space.n, **agent_kwargs)
+            actor = DiscretePolicy(
+                action_dim=action_space.n,
+                activation=activation,
+                **agent_kwargs,
+            )
+            critic = DiscreteQNetwork(
+                action_dim=action_space.n,
+                activation=activation,
+                **agent_kwargs,
+            )
         else:
             actor = SquashedGaussianPolicy(
-                np.prod(action_space.shape),
-                (action_space.low, action_space.high),
+                action_dim=np.prod(action_space.shape),
+                action_range=(action_space.low, action_space.high),
+                activation=activation,
                 log_std_range=(-10, 2),
                 **agent_kwargs,
             )
-            critic = QNetwork(**agent_kwargs)
+            critic = QNetwork(activation=activation, **agent_kwargs)
         return {"actor": actor, "critic": critic}
 
     @property

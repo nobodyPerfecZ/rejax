@@ -58,20 +58,28 @@ class TD3(
     def create_agent(cls, config, env, env_params):
         actor_kwargs = config.pop("actor_kwargs", {})
         activation = actor_kwargs.pop("activation", "swish")
-        actor_kwargs["activation"] = getattr(nn, activation)
+        activation = getattr(nn, activation)
         action_range = (
             env.action_space(env_params).low,
             env.action_space(env_params).high,
         )
         action_dim = np.prod(env.action_space(env_params).shape)
         actor = DeterministicPolicy(
-            action_dim, action_range, hidden_layer_sizes=(64, 64), **actor_kwargs
+            action_dim=action_dim,
+            action_range=action_range,
+            hidden_layer_sizes=(64, 64),
+            activation=activation,
+            **actor_kwargs,
         )
 
         critic_kwargs = config.pop("critic_kwargs", {})
         activation = critic_kwargs.pop("activation", "swish")
-        critic_kwargs["activation"] = getattr(nn, activation)
-        critic = QNetwork(hidden_layer_sizes=(64, 64), **critic_kwargs)
+        activation = getattr(nn, activation)
+        critic = QNetwork(
+            hidden_layer_sizes=(64, 64),
+            activation=activation,
+            **critic_kwargs,
+        )
 
         return {"actor": actor, "critic": critic}
 
