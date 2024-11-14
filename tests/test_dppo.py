@@ -117,7 +117,7 @@ class TestEnvironmentsDPPO(unittest.TestCase):
 
 class TestEnvironmentsDPPOKurt(unittest.TestCase):
     args = {
-        "kurtosis_coef": 1e-4,
+        "kurt_coef": 1e-4,
         "alpha": 0.0,
         "sr_lambda": 0.95,
         "kappa": 0.2,
@@ -214,7 +214,7 @@ class TestEnvironmentsDPPOKurt(unittest.TestCase):
 
 class TestEnvironmentsDPPOSkew(unittest.TestCase):
     args = {
-        "skewness_coef": 1e-3,
+        "skew_coef": 1e-3,
         "alpha": 0.0,
         "sr_lambda": 0.95,
         "kappa": 0.2,

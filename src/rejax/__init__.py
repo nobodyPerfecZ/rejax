@@ -16,7 +16,7 @@ from rejax.algos import (
 _algos = {
     "crs_ppo": PPOCVaRRejectionSampling,
     "dppo": DPPO,
-    "dppo_kurtosis": DPPOKurt,
+    "dppo_kurt": DPPOKurt,
     "dppo_skew": DPPOSkew,
     "dqn": DQN,
     "dsac": DSAC,

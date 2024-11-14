@@ -284,7 +284,7 @@ class DPPO(PPO):
 
 
 class DPPOKurt(DPPO):
-    kurtosis_coef: chex.Scalar = struct.field(pytree_node=True, default=1e-4)
+    kurt_coef: chex.Scalar = struct.field(pytree_node=True, default=1e-4)
 
     def calculate_gae(self, ts, trajectories, last_val):
         def get_advantages(runner_state, transition):
@@ -326,14 +326,14 @@ class DPPOKurt(DPPO):
         )
         ts = runner_state[0]
         advantages, targets = metrics
-        advantages = advantages + self.kurtosis_coef * -kurtosis(
+        advantages = advantages + self.kurt_coef * -kurtosis(
             advantages, axis=-1, keepdims=True
         )
         return ts, advantages, targets
 
 
 class DPPOSkew(DPPO):
-    skewness_coef: chex.Scalar = struct.field(pytree_node=True, default=1e-3)
+    skew_coef: chex.Scalar = struct.field(pytree_node=True, default=1e-3)
 
     def calculate_gae(self, ts, trajectories, last_val):
         def get_advantages(runner_state, transition):
@@ -375,7 +375,7 @@ class DPPOSkew(DPPO):
         )
         ts = runner_state[0]
         advantages, targets = metrics
-        advantages = advantages + self.skewness_coef * -skewness(
+        advantages = advantages + self.skew_coef * -skewness(
             advantages, axis=-1, keepdims=True
         )
 
