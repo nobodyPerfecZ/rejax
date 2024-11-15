@@ -3,87 +3,9 @@ import jax
 import jax.numpy as jnp
 from flax import struct
 
+from rejax.statistics import conditional_value_at_risk
+
 from .ppo import PPO, AdvantageMinibatch
-
-
-def value_at_risk(
-    x: chex.Array,
-    alpha: float = 0.05,
-    axis: int | None = None,
-    keepdims: bool = False,
-) -> chex.Array:
-    """
-    Compute the value at risk (VaR) along the specified axis.
-
-    Args:
-        x (chex.Array):
-            Array of shape (?, ...)
-
-        alpha (float):
-            The confidence level
-
-        axis (int, optional):
-            Axis or axes along which the value at risk (VaR) is computed
-
-        keepdims (bool):
-            Controls whether to keep the dimension of x
-
-    Returns:
-        chex.Array:
-            Array of shape (?, ...)
-            The value at risk (VaR) along the specified axis
-    """
-    # Get the package
-    var = jnp.quantile(x, q=alpha, axis=axis, keepdims=keepdims)
-
-    if axis is None and keepdims:
-        # Case: Fix error from jax where the dimension of var is not the same as x
-        output_shape = [1] * x.ndim
-        var = jnp.broadcast_to(var, output_shape)
-
-    return var
-
-
-def conditional_value_at_risk(
-    x: chex.Array,
-    alpha: float = 0.05,
-    axis: int | None = None,
-    keepdims: bool = False,
-) -> chex.Array:
-    """
-    Computes the conditional value at risk (CVaR) along the specified axis.
-
-    Args:
-        x (chex.Array):
-            Array of shape (?, ...)
-
-        alpha (float):
-            The confidence level
-
-        axis (int, optional):
-            Axis or axes along which the conditional value at risk (CVaR) is computed
-
-        keepdims (bool):
-            Controls whether to keep the dimension of x
-
-    Returns:
-        chex.Array:
-            Array of shape (?, ...)
-            The conditional value at risk (CVaR) along the specified axis
-    """
-    # Compute Value at Risk (VaR)
-    var = value_at_risk(x, alpha, axis=axis, keepdims=True)
-
-    cvar = var + jnp.mean(jnp.minimum(x - var, 0), axis=axis, keepdims=True) / (
-        alpha + 1e-10
-    )
-
-    if keepdims:
-        # Case: Keep the dimension of the input
-        return cvar
-    else:
-        # Case: Remove the axis dimension of the input
-        return cvar.squeeze(axis=axis)
 
 
 class PPOCVaRRejectionSampling(PPO):
