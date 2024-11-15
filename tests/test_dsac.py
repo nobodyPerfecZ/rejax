@@ -23,7 +23,6 @@ from .environments import (
 class TestEnvironmentsDSAC(unittest.TestCase):
     args = {
         "alpha": 0.0,
-        "kappa": 0.2,
         "num_envs": 1,
         "learning_rate": 0.0003,
         "total_timesteps": 16384,

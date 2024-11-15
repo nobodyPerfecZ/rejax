@@ -90,7 +90,6 @@ def skewness(
 class DPPO(PPO):
     alpha: chex.Scalar = struct.field(pytree_node=True, default=0.0)
     sr_lambda: chex.Scalar = struct.field(pytree_node=True, default=0.95)
-    kappa: chex.Scalar = struct.field(pytree_node=True, default=0.2)
 
     @classmethod
     def create_agent(cls, config, env, env_params):
@@ -120,7 +119,11 @@ class DPPO(PPO):
                 **agent_kwargs,
             )
 
-        critic = VQuantileNetwork(activation=activation, num_quantiles=num_quantiles, **agent_kwargs)
+        critic = VQuantileNetwork(
+            activation=activation,
+            num_quantiles=num_quantiles,
+            **agent_kwargs,
+        )
         return {"actor": actor, "critic": critic}
 
     def train_iteration(self, ts):
@@ -237,8 +240,11 @@ class DPPO(PPO):
     def update_critic(self, ts, batch):
         def critic_loss_fn(params):
             predictions = self.critic.apply(params, batch.trajectories.obs)
+            predictions_collected = batch.trajectories.value
             targets = batch.targets
-            return self.quantile_huber_loss(predictions, targets)
+            return self.quantile_clipped_mse_loss(
+                predictions, predictions_collected, targets
+            )
 
         grads = jax.grad(critic_loss_fn)(ts.critic_ts.params)
         return ts.replace(critic_ts=ts.critic_ts.apply_gradients(grads=grads))
@@ -255,7 +261,7 @@ class DPPO(PPO):
             sorted_quantiles = jnp.sort(quantiles, axis=-1)
             return jnp.sum(distortion * sorted_quantiles, axis=-1)
 
-    def quantile_huber_loss(self, predictions, targets):
+    def quantile_clipped_mse_loss(self, predictions, predictions_collected, targets):
         _, num_quantiles = predictions.shape
         tau_hat = jnp.linspace(
             start=1 / (2 * num_quantiles),
@@ -264,21 +270,24 @@ class DPPO(PPO):
             endpoint=True,
         )
         predictions = jnp.expand_dims(predictions, axis=-1)
+        predictions_collected = jnp.expand_dims(predictions_collected, axis=-1)
         targets = jnp.expand_dims(targets, axis=1)
         tau_hat = jnp.expand_dims(tau_hat, axis=[0, -1])
 
         delta = targets - predictions
-        delta_abs = jnp.abs(delta)
-
-        # HUBER LOSS
-        huber_loss = jnp.where(
-            delta_abs < self.kappa,
-            0.5 * jnp.square(delta),
-            self.kappa * (delta_abs - 0.5 * self.kappa),
+        delta1 = targets - (
+            predictions_collected
+            + (predictions - predictions_collected).clip(-self.clip_eps, +self.clip_eps)
         )
+        loss1 = jnp.square(delta1)
+        delta2 = targets - predictions
+        loss2 = jnp.square(delta2)
 
-        # QUANTILE HUBER LOSS
-        loss = jnp.abs(jnp.where(delta < 0, (tau_hat - 1), tau_hat)) * huber_loss
+        # CLIPPED L2 LOSS
+        clipped_l2_loss = 0.5 * jnp.maximum(loss1, loss2)
+
+        # QUANTILE CLIPPED L2 LOSS
+        loss = jnp.abs(jnp.where(delta < 0, (tau_hat - 1), tau_hat)) * clipped_l2_loss
 
         return loss.mean()
 

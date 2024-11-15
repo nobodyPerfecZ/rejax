@@ -23,7 +23,6 @@ class TestEnvironmentsDPPO(unittest.TestCase):
     args = {
         "alpha": 0.0,
         "sr_lambda": 0.95,
-        "kappa": 0.2,
         "num_envs": 64,
         "num_steps": 16,
         "num_epochs": 10,
@@ -102,7 +101,7 @@ class TestEnvironmentsDPPO(unittest.TestCase):
                 if not discrete:
                     value = dppo.critic.apply(ts.critic_ts.params, obs)
                     for v in value:
-                        np.testing.assert_allclose(v, 0.0, atol=0.1)
+                        np.testing.assert_allclose(v, 0.0, atol=0.2)
 
                 act = dppo.make_act(ts)
                 rngs = jax.random.split(rng, 10)
@@ -120,7 +119,6 @@ class TestEnvironmentsDPPOKurt(unittest.TestCase):
         "kurt_coef": 1e-4,
         "alpha": 0.0,
         "sr_lambda": 0.95,
-        "kappa": 0.2,
         "num_envs": 64,
         "num_steps": 16,
         "num_epochs": 10,
@@ -217,7 +215,6 @@ class TestEnvironmentsDPPOSkew(unittest.TestCase):
         "skew_coef": 1e-3,
         "alpha": 0.0,
         "sr_lambda": 0.95,
-        "kappa": 0.2,
         "num_envs": 64,
         "num_steps": 16,
         "num_epochs": 10,

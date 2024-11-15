@@ -19,16 +19,15 @@ from .sac import SAC
 
 class DSAC(SAC):
     alpha: chex.Scalar = struct.field(pytree_node=True, default=0.0)
-    kappa: chex.Scalar = struct.field(pytree_node=True, default=0.2)
 
     @classmethod
     def create_agent(cls, config, env, env_params):
         agent_kwargs = config.pop("agent_kwargs", {})
         activation = agent_kwargs.pop("activation", "relu")
         activation = getattr(nn, activation)
-        layers = config.pop("hidden_layer_sizes", (64, 64))
+        layers = agent_kwargs.pop("hidden_layer_sizes", (64, 64))
         agent_kwargs["hidden_layer_sizes"] = tuple(layers)
-        num_quantiles = config.pop("num_quantiles", 200)
+        num_quantiles = agent_kwargs.pop("num_quantiles", 200)
 
         action_space = env.action_space(env_params)
         if isinstance(action_space, gymnax.environments.spaces.Discrete):
@@ -120,7 +119,7 @@ class DSAC(SAC):
                 jnp.expand_dims(mb.reward, axis=-1)
                 + self.gamma * (1 - jnp.expand_dims(mb.done, axis=-1)) * q_target
             )
-            losses = jax.vmap(lambda q: self.quantile_huber_loss(q, target))(qs)
+            losses = jax.vmap(lambda q: self.quantile_mse_loss(q, target))(qs)
             return losses.sum(axis=0).mean()
 
         grads = jax.grad(critic_loss_fn)(ts.critic_ts.params)
@@ -151,7 +150,7 @@ class DSAC(SAC):
             sorted_quantiles = jnp.sort(quantiles, axis=-1)
             return jnp.sum(distortion * sorted_quantiles, axis=-1)
 
-    def quantile_huber_loss(self, predictions, targets):
+    def quantile_mse_loss(self, predictions, targets):
         _, num_quantiles = predictions.shape
         tau_hat = jnp.linspace(
             start=1 / (2 * num_quantiles),
@@ -164,16 +163,11 @@ class DSAC(SAC):
         tau_hat = jnp.expand_dims(tau_hat, axis=[0, -1])
 
         delta = targets - predictions
-        delta_abs = jnp.abs(delta)
 
-        # HUBER LOSS
-        huber_loss = jnp.where(
-            delta_abs < self.kappa,
-            0.5 * jnp.square(delta),
-            self.kappa * (delta_abs - 0.5 * self.kappa),
-        )
+        # L2 LOSS
+        l2_loss = 0.5 * jnp.square(delta)
 
-        # QUANTILE HUBER LOSS
-        loss = jnp.abs(jnp.where(delta < 0, (tau_hat - 1), tau_hat)) * huber_loss
+        # QUANTILE L2 LOSS
+        loss = jnp.abs(jnp.where(delta < 0, (tau_hat - 1), tau_hat)) * l2_loss
 
         return loss

@@ -52,7 +52,7 @@ class SAC(
         agent_kwargs = config.pop("agent_kwargs", {})
         activation = agent_kwargs.pop("activation", "relu")
         activation = getattr(nn, activation)
-        layers = config.pop("hidden_layer_sizes", (64, 64))
+        layers = agent_kwargs.pop("hidden_layer_sizes", (64, 64))
         agent_kwargs["hidden_layer_sizes"] = tuple(layers)
 
         action_space = env.action_space(env_params)
