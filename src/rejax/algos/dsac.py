@@ -7,6 +7,12 @@ from flax import linen as nn
 from flax import struct
 from jax import numpy as jnp
 
+from rejax.distortion import (
+    risk_measure_cpw,
+    risk_measure_cvar,
+    risk_measure_neutral,
+    risk_measure_wang,
+)
 from rejax.networks import (
     DiscretePolicy,
     DiscreteQQuantileNetwork,
@@ -19,7 +25,8 @@ from .sac import SAC
 
 
 class DSAC(SAC):
-    alpha: chex.Scalar = struct.field(pytree_node=True, default=0.0)
+    beta: chex.Scalar = struct.field(pytree_node=True, default=0.0)
+    risk_fn: str = struct.field(pytree_node=False, default="neutral")
 
     @classmethod
     def create_agent(cls, config, env, env_params):
@@ -140,16 +147,16 @@ class DSAC(SAC):
         return ts
 
     def risk_measure(self, quantiles):
-        if self.alpha == 0.0:
-            # Neutral Distortion
-            return jnp.mean(quantiles, axis=-1)
+        if self.risk_fn == "neutral":
+            return risk_measure_neutral(quantiles, self.beta)
+        elif self.risk_fn == "cvar":
+            return risk_measure_cvar(quantiles, self.beta)
+        elif self.risk_fn == "cpw":
+            return risk_measure_cpw(quantiles, self.beta)
+        elif self.risk_fn == "wang":
+            return risk_measure_wang(quantiles, self.beta)
         else:
-            # CVAR Distortion
-            tau = jnp.linspace(0, 1, num=quantiles.shape[-1] + 1, endpoint=True)
-            distorted_tau = jnp.minimum(tau / self.alpha, 1.0)
-            distortion = distorted_tau[1:] - distorted_tau[:-1]
-            sorted_quantiles = jnp.sort(quantiles, axis=-1)
-            return jnp.sum(distortion * sorted_quantiles, axis=-1)
+            raise ValueError("Invalid risk measure")
 
     def quantile_mse_loss(self, predictions, targets):
         _, num_quantiles = predictions.shape

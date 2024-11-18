@@ -22,7 +22,8 @@ from .environments import (
 
 class TestEnvironmentsDSAC(unittest.TestCase):
     args = {
-        "alpha": 0.0,
+        "beta": 0.0,
+        "risk_fn": "neutral",
         "num_envs": 1,
         "learning_rate": 0.0003,
         "total_timesteps": 16384,
@@ -206,7 +207,8 @@ class TestEnvironmentsDSAC(unittest.TestCase):
 class TestEnvironmentsDSACKurt(unittest.TestCase):
     args = {
         "kurt_coef": 1e-4,
-        "alpha": 0.0,
+        "beta": 0.0,
+        "risk_fn": "neutral",
         "num_envs": 1,
         "learning_rate": 0.0003,
         "total_timesteps": 16384,
@@ -390,7 +392,8 @@ class TestEnvironmentsDSACKurt(unittest.TestCase):
 class TestEnvironmentsDSACSkew(unittest.TestCase):
     args = {
         "skew_coef": 1e-3,
-        "alpha": 0.0,
+        "beta": 0.0,
+        "risk_fn": "neutral",
         "num_envs": 1,
         "learning_rate": 0.0003,
         "total_timesteps": 16384,

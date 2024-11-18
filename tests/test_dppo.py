@@ -21,7 +21,8 @@ from .environments import (
 
 class TestEnvironmentsDPPO(unittest.TestCase):
     args = {
-        "alpha": 0.0,
+        "beta": 0.0,
+        "risk_fn": "neutral",
         "sr_lambda": 0.95,
         "num_envs": 64,
         "num_steps": 16,
@@ -117,7 +118,8 @@ class TestEnvironmentsDPPO(unittest.TestCase):
 class TestEnvironmentsDPPOKurt(unittest.TestCase):
     args = {
         "kurt_coef": 1e-4,
-        "alpha": 0.0,
+        "beta": 0.0,
+        "risk_fn": "neutral",
         "sr_lambda": 0.95,
         "num_envs": 64,
         "num_steps": 16,
@@ -213,7 +215,8 @@ class TestEnvironmentsDPPOKurt(unittest.TestCase):
 class TestEnvironmentsDPPOSkew(unittest.TestCase):
     args = {
         "skew_coef": 1e-3,
-        "alpha": 0.0,
+        "beta": 0.0,
+        "risk_fn": "neutral",
         "sr_lambda": 0.95,
         "num_envs": 64,
         "num_steps": 16,
