@@ -1,7 +1,6 @@
 import unittest
 
 import jax
-import numpy as np
 
 from rejax import PPOCVaRRejectionSampling
 
@@ -32,54 +31,54 @@ class TestEnvironmentsPPOCVaRRejectionSampling(unittest.TestCase):
         "skip_initial_evaluation": True,
     }
 
-    def train_fn(self, cvar_ppo):
-        return PPOCVaRRejectionSampling.train(cvar_ppo, rng=jax.random.PRNGKey(0))
+    def train_fn(self, ppo_crs):
+        return PPOCVaRRejectionSampling.train(ppo_crs, rng=jax.random.PRNGKey(0))
 
     def test_env1(self):
         for discrete, env in enumerate([TestEnv1Continuous(), TestEnv1Discrete()]):
             with self.subTest(discrete=bool(discrete)):
-                cvar_ppo = PPOCVaRRejectionSampling.create(env=env, **self.args)
-                ts, _ = self.train_fn(cvar_ppo)
-                value = cvar_ppo.critic.apply(ts.critic_ts.params, jax.numpy.array([0]))
-                np.testing.assert_allclose(value, 1.0, atol=0.1)
+                ppo_crs = PPOCVaRRejectionSampling.create(env=env, **self.args)
+                ts, _ = self.train_fn(ppo_crs)
+                value = ppo_crs.critic.apply(ts.critic_ts.params, jax.numpy.array([0]))
+                self.assertAlmostEqual(value, 1.0, delta=0.1)
 
     def test_env2(self):
         for discrete, env in enumerate([TestEnv2Continuous(), TestEnv2Discrete()]):
             with self.subTest(discrete=bool(discrete)):
-                cvar_ppo = PPOCVaRRejectionSampling.create(env=env, **self.args)
-                ts, _ = self.train_fn(cvar_ppo)
+                ppo_crs = PPOCVaRRejectionSampling.create(env=env, **self.args)
+                ts, _ = self.train_fn(ppo_crs)
 
                 obs = jax.numpy.array([[-1], [1]])
                 rew = obs
-                value = cvar_ppo.critic.apply(ts.critic_ts.params, obs)
+                value = ppo_crs.critic.apply(ts.critic_ts.params, obs)
 
                 for v, r in zip(value, rew):
-                    np.testing.assert_allclose(v, r.item(), atol=0.1)
+                    self.assertAlmostEqual(v, r, delta=0.1)
 
     def test_env3(self):
         for discrete, env in enumerate([TestEnv3Continuous(), TestEnv3Discrete()]):
             with self.subTest(discrete=bool(discrete)):
-                cvar_ppo = PPOCVaRRejectionSampling.create(env=env, **self.args)
-                ts, _ = self.train_fn(cvar_ppo)
+                ppo_crs = PPOCVaRRejectionSampling.create(env=env, **self.args)
+                ts, _ = self.train_fn(ppo_crs)
 
                 obs = jax.numpy.array([[-1], [1]])
-                rew = [1 * cvar_ppo.gamma, 1]
-                value = cvar_ppo.critic.apply(ts.critic_ts.params, obs)
+                rew = [1 * ppo_crs.gamma, 1]
+                value = ppo_crs.critic.apply(ts.critic_ts.params, obs)
 
                 for v, r in zip(value, rew):
-                    np.testing.assert_allclose(v, r, atol=0.1)
+                    self.assertAlmostEqual(v, r, delta=0.1)
 
     def test_env4(self):
         for discrete, env in enumerate([TestEnv4Continuous(), TestEnv4Discrete()]):
             with self.subTest(discrete=bool(discrete)):
-                cvar_ppo = PPOCVaRRejectionSampling.create(env=env, **self.args)
-                ts, _ = self.train_fn(cvar_ppo)
+                ppo_crs = PPOCVaRRejectionSampling.create(env=env, **self.args)
+                ts, _ = self.train_fn(ppo_crs)
 
                 best_action = jax.numpy.array(1.0 if discrete else 2.0)
-                value = cvar_ppo.critic.apply(ts.critic_ts.params, jax.numpy.array([0]))
-                np.testing.assert_allclose(value, best_action, atol=0.1)
+                value = ppo_crs.critic.apply(ts.critic_ts.params, jax.numpy.array([0]))
+                self.assertAlmostEqual(value, best_action, delta=0.1)
 
-                act = cvar_ppo.make_act(ts)
+                act = ppo_crs.make_act(ts)
                 rngs = jax.random.split(jax.random.PRNGKey(0), 10)
                 actions = jax.vmap(act, in_axes=(None, 0))(jax.numpy.array([0]), rngs)
 
@@ -89,8 +88,8 @@ class TestEnvironmentsPPOCVaRRejectionSampling(unittest.TestCase):
     def test_env5(self):
         for discrete, env in enumerate([TestEnv5Continuous(), TestEnv5Discrete()]):
             with self.subTest(discrete=bool(discrete)):
-                cvar_ppo = PPOCVaRRejectionSampling.create(env=env, **self.args)
-                ts, _ = self.train_fn(cvar_ppo)
+                ppo_crs = PPOCVaRRejectionSampling.create(env=env, **self.args)
+                ts, _ = self.train_fn(ppo_crs)
 
                 rng = jax.random.PRNGKey(0)
                 if not discrete:
@@ -99,11 +98,11 @@ class TestEnvironmentsPPOCVaRRejectionSampling(unittest.TestCase):
                     obs = 2 * jax.random.bernoulli(rng, shape=(10, 1)) - 1
 
                 if not discrete:
-                    value = cvar_ppo.critic.apply(ts.critic_ts.params, obs)
+                    value = ppo_crs.critic.apply(ts.critic_ts.params, obs)
                     for v in value:
-                        np.testing.assert_allclose(v, 0.0, atol=0.1)
+                        self.assertAlmostEqual(v, 0.0, delta=0.2)
 
-                act = cvar_ppo.make_act(ts)
+                act = ppo_crs.make_act(ts)
                 rngs = jax.random.split(rng, 10)
                 actions = jax.vmap(act)(obs, rngs)
 

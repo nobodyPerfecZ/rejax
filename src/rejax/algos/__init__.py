@@ -1,5 +1,4 @@
 from .algorithm import Algorithm
-from .crs import PPOCVaRRejectionSampling
 from .dppo import DPPO, DPPOKurt, DPPOSkew
 from .dqn import DQN
 from .dsac import DSAC, DSACKurt, DSACSkew
@@ -12,8 +11,10 @@ from .mixins import (
     VectorizedEnvMixin,
 )
 from .ppo import PPO
+from .ppo_crs import PPOCVaRRejectionSampling
 from .pqn import PQN
 from .sac import SAC
+from .sac_crs import SACCVaRRejectionSampling
 from .td3 import TD3
 
 __all__ = [
@@ -30,6 +31,7 @@ __all__ = [
     "PPOCVaRRejectionSampling",
     "PQN",
     "SAC",
+    "SACCVaRRejectionSampling",
     "TD3",
     "EpsilonGreedyMixin",
     "NormalizeObservationsMixin",

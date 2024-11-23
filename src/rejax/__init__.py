@@ -13,10 +13,10 @@ from rejax.algos import (
     DSACKurt,
     DSACSkew,
     PPOCVaRRejectionSampling,
+    SACCVaRRejectionSampling,
 )
 
 _algos = {
-    "crs_ppo": PPOCVaRRejectionSampling,
     "dppo": DPPO,
     "dppo_kurt": DPPOKurt,
     "dppo_skew": DPPOSkew,
@@ -26,8 +26,10 @@ _algos = {
     "dsac_skew": DSACSkew,
     "iqn": IQN,
     "ppo": PPO,
+    "ppo_crs": PPOCVaRRejectionSampling,
     "pqn": PQN,
     "sac": SAC,
+    "sac_crs": SACCVaRRejectionSampling,
     "td3": TD3,
 }
 
@@ -49,6 +51,7 @@ __all__ = [
     "PPOCVaRRejectionSampling",
     "PQN",
     "SAC",
+    "SACCVaRRejectionSampling",
     "TD3",
     "DPPO",
     "DPPOKurt",
