@@ -95,6 +95,17 @@ class ReplayBufferMixin(VectorizedEnvMixin):
 
         return ts, evaluation
 
+    def linear_interpolation(self, train_state1=None, train_state2=None, alpha=0.5):
+        if train_state1 is None and train_state2 is None:
+            raise ValueError("Both train_state1 and train_state2 must be provided")
+
+        # Interpolate between two train states
+        ts = jax.tree_util.tree_map(
+            lambda x, y: x * (1 - alpha) + y * alpha, train_state1, train_state2
+        )
+
+        return ts, self.eval_callback(self, ts, ts.rng)
+
 
 class OnPolicyMixin(VectorizedEnvMixin):
     num_envs: int = struct.field(pytree_node=False, default=64)  # overwrite default
@@ -154,6 +165,17 @@ class OnPolicyMixin(VectorizedEnvMixin):
             )
 
         return ts, evaluation
+
+    def linear_interpolation(self, train_state1=None, train_state2=None, alpha=0.5):
+        if train_state1 is None and train_state2 is None:
+            raise ValueError("Both train_state1 and train_state2 must be provided")
+
+        # Interpolate between two train states
+        ts = jax.tree_util.tree_map(
+            lambda x, y: x * (1 - alpha) + y * alpha, train_state1, train_state2
+        )
+
+        return ts, self.eval_callback(self, ts, ts.rng)
 
 
 class TargetNetworkMixin(struct.PyTreeNode):
