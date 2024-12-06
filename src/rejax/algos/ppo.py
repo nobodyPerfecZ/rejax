@@ -112,6 +112,29 @@ class PPO(OnPolicyMixin, NormalizeObservationsMixin, Algorithm):
         ts, _ = jax.lax.scan(update_epoch, ts, None, self.num_epochs)
         return ts
 
+    def interpolate_ts(self, ts1, ts2, alpha):
+        # Interpolate between actor parameters
+        actor_params = jax.tree_util.tree_map(
+            lambda x, y: x * (1 - alpha) + y * alpha,
+            ts1.actor_ts.params,
+            ts2.actor_ts.params,
+        )
+
+        # Interpolate between actor parameters
+        critic_params = jax.tree_util.tree_map(
+            lambda x, y: x * (1 - alpha) + y * alpha,
+            ts1.critic_ts.params,
+            ts2.critic_ts.params,
+        )
+
+        # Replace actor and critic with the first train state
+        ts = ts1.replace(
+            actor_ts=ts1.actor_ts.replace(params=actor_params),
+            critic_ts=ts1.critic_ts.replace(params=critic_params),
+        )
+
+        return ts
+
     def collect_trajectories(self, ts):
         def env_step(ts, unused):
             # Get keys for sampling action and stepping environment

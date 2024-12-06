@@ -178,6 +178,47 @@ class SAC(
 
         return ts
 
+    def interpolate_ts(self, ts1, ts2, alpha):
+        # Interpolate between actor parameters
+        actor_params = jax.tree_util.tree_map(
+            lambda x, y: x * (1 - alpha) + y * alpha,
+            ts1.actor_ts.params,
+            ts2.actor_ts.params,
+        )
+
+        # Interpolate between actor parameters
+        critic_params = jax.tree_util.tree_map(
+            lambda x, y: x * (1 - alpha) + y * alpha,
+            ts1.critic_ts.params,
+            ts2.critic_ts.params,
+        )
+
+        # Interpolate between critic target parameters
+        critic_target_params = jax.tree_util.tree_map(
+            lambda x, y: x * (1 - alpha) + y * alpha,
+            ts1.critic_target_params.params,
+            ts2.critic_target_params.params,
+        )
+
+        # Interpolate between alpha parameters
+        alpha_params = jax.tree_util.tree_map(
+            lambda x, y: x * (1 - alpha) + y * alpha,
+            ts1.alpha_ts.params,
+            ts2.alpha_ts.params,
+        )
+
+        # Replace actor, critic, critic_target and alpha with the first train state
+        ts = ts1.replace(
+            actor_ts=ts1.actor_ts.replace(params=actor_params),
+            critic_ts=ts1.critic_ts.replace(params=critic_params),
+            critic_target_params=ts1.critic_target_params.replace(
+                params=critic_target_params
+            ),
+            alpha_ts=ts1.alpha_ts.replace(params=alpha_params),
+        )
+
+        return ts
+
     def collect_transitions(self, ts):
         rng, rng_action = jax.random.split(ts.rng)
         ts = ts.replace(rng=rng)
