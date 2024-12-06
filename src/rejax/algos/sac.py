@@ -181,28 +181,28 @@ class SAC(
     def interpolate_ts(self, ts1, ts2, alpha):
         # Interpolate between actor parameters
         actor_params = jax.tree_util.tree_map(
-            lambda x, y: x * (1 - alpha) + y * alpha,
+            lambda x, y: x * alpha + y * (1 - alpha),
             ts1.actor_ts.params,
             ts2.actor_ts.params,
         )
 
         # Interpolate between actor parameters
         critic_params = jax.tree_util.tree_map(
-            lambda x, y: x * (1 - alpha) + y * alpha,
+            lambda x, y: x * alpha + y * (1 - alpha),
             ts1.critic_ts.params,
             ts2.critic_ts.params,
         )
 
         # Interpolate between critic target parameters
         critic_target_params = jax.tree_util.tree_map(
-            lambda x, y: x * (1 - alpha) + y * alpha,
+            lambda x, y: x * alpha + y * (1 - alpha),
             ts1.critic_target_params.params,
             ts2.critic_target_params.params,
         )
 
         # Interpolate between alpha parameters
         alpha_params = jax.tree_util.tree_map(
-            lambda x, y: x * (1 - alpha) + y * alpha,
+            lambda x, y: x * alpha + y * (1 - alpha),
             ts1.alpha_ts.params,
             ts2.alpha_ts.params,
         )
