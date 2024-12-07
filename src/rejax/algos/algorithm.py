@@ -30,9 +30,8 @@ class Algorithm(struct.PyTreeNode):
     # Common parameters (excluding algorithm-specific ones)
     total_timesteps: int = struct.field(pytree_node=False, default=131_072)
     learning_rate: chex.Scalar = struct.field(pytree_node=True, default=0.0003)
-    max_grad_norm: chex.Scalar = struct.field(pytree_node=True, default=1.0)
     gamma: chex.Scalar = struct.field(pytree_node=True, default=0.99)
-    max_grad_norm: chex.Scalar = struct.field(pytree_node=True, default=jnp.inf)
+    max_grad_norm: chex.Scalar = struct.field(pytree_node=True, default=1.0)
 
     @classmethod
     def create(cls, **config):
