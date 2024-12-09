@@ -9,7 +9,11 @@ from flax.training.train_state import TrainState
 from jax import numpy as jnp
 
 from rejax.algos.algorithm import Algorithm, register_init
-from rejax.algos.mixins import NormalizeObservationsMixin, OnPolicyMixin
+from rejax.algos.mixins import (
+    NormalizeObservationsMixin,
+    OnPolicyMixin,
+    NormalizeRewardsMixin,
+)
 from rejax.networks import DiscretePolicy, GaussianPolicy, VNetwork
 
 
@@ -28,7 +32,7 @@ class AdvantageMinibatch(struct.PyTreeNode):
     targets: chex.Array
 
 
-class PPO(OnPolicyMixin, NormalizeObservationsMixin, Algorithm):
+class PPO(OnPolicyMixin, NormalizeObservationsMixin, NormalizeRewardsMixin, Algorithm):
     actor: nn.Module = struct.field(pytree_node=False, default=None)
     critic: nn.Module = struct.field(pytree_node=False, default=None)
     num_epochs: int = struct.field(pytree_node=False, default=8)
@@ -39,8 +43,8 @@ class PPO(OnPolicyMixin, NormalizeObservationsMixin, Algorithm):
 
     def make_act(self, ts):
         def act(obs, rng):
-            if getattr(self, "normalize_observations", False):
-                obs = self.normalize_obs(ts.rms_state, obs)
+            if self.normalize_observations:
+                obs = self.normalize_obs(ts.obs_rms_state, obs)
 
             obs = jnp.expand_dims(obs, 0)
             action = self.actor.apply(ts.actor_ts.params, obs, rng, method="act")
@@ -165,8 +169,15 @@ class PPO(OnPolicyMixin, NormalizeObservationsMixin, Algorithm):
             next_obs, env_state, reward, done, _ = t
 
             if self.normalize_observations:
-                rms_state, next_obs = self.update_and_normalize(ts.rms_state, next_obs)
-                ts = ts.replace(rms_state=rms_state)
+                obs_rms_state, next_obs = self.update_obs_and_normalize(
+                    ts.obs_rms_state, next_obs
+                )
+                ts = ts.replace(obs_rms_state=obs_rms_state)
+            if self.normalize_rewards:
+                reward_rms_state, reward = self.update_reward_and_normalize(
+                    ts.reward_rms_state, next_obs, reward, done
+                )
+                ts = ts.replace(reward_rms_state=reward_rms_state)
 
             # Return updated runner state and transition
             transition = Trajectory(

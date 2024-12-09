@@ -187,7 +187,7 @@ class TargetNetworkMixin(struct.PyTreeNode):
 
 
 @struct.dataclass
-class RMSState:
+class ObservationRMSState:
     mean: chex.Array
     var: chex.Array
     count: chex.Numeric
@@ -205,11 +205,11 @@ class NormalizeObservationsMixin(struct.PyTreeNode):
     normalize_observations: bool = struct.field(pytree_node=False, default=False)
 
     @register_init
-    def initialize_rms_state(self, rng):
+    def initialize_obs_rms_state(self, rng):
         obs_shape = (1, *self.env.observation_space(self.env_params).shape)
-        return {"rms_state": RMSState.create(obs_shape)}
+        return {"obs_rms_state": ObservationRMSState.create(obs_shape)}
 
-    def update_rms(self, rms_state, obs, batched=True):
+    def update_obs_rms(self, rms_state, obs, batched=True):
         batch = obs if batched else jnp.expand_dims(obs, 0)
 
         batch_count = batch.shape[0]
@@ -225,11 +225,65 @@ class NormalizeObservationsMixin(struct.PyTreeNode):
         new_var = M2 / tot_count
         new_count = tot_count
 
-        return RMSState(mean=new_mean, var=new_var, count=new_count)
+        return ObservationRMSState(mean=new_mean, var=new_var, count=new_count)
 
     def normalize_obs(self, rms_state, obs):
         return (obs - rms_state.mean) / jnp.sqrt(rms_state.var + 1e-8)
 
-    def update_and_normalize(self, rms_state, obs, batched=True):
-        rms_state = self.update_rms(rms_state, obs, batched)
+    def update_obs_and_normalize(self, rms_state, obs, batched=True):
+        rms_state = self.update_obs_rms(rms_state, obs, batched)
         return rms_state, self.normalize_obs(rms_state, obs)
+
+
+@struct.dataclass
+class RewardRMSState:
+    mean: chex.Scalar
+    var: chex.Scalar
+    return_val: chex.Array
+    count: chex.Numeric
+
+    @classmethod
+    def create(cls, num_envs):
+        return cls(
+            mean=0.0,
+            var=1.0,
+            return_val=jnp.zeros((num_envs,), dtype=jnp.float32),
+            count=1e-4,
+        )
+
+
+class NormalizeRewardsMixin(struct.PyTreeNode):
+    normalize_rewards: bool = struct.field(pytree_node=False, default=False)
+
+    @register_init
+    def initialize_reward_rms_state(self, rng):
+        return {"reward_rms_state": RewardRMSState.create(self.num_envs)}
+
+    def update_reward_rms(self, rms_state, obs, reward, done, batched=True):
+        batch = obs if batched else jnp.expand_dims(obs, 0)
+
+        new_return_val = rms_state.return_val * self.gamma * (1 - done) + reward
+
+        batch_count = batch.shape[0]
+        batch_mean, batch_var = new_return_val.mean(axis=0), new_return_val.var(axis=0)
+
+        delta = batch_mean - rms_state.mean
+        tot_count = rms_state.count + batch_count
+
+        new_mean = rms_state.mean + delta * batch_count / tot_count
+        m_a = rms_state.var * rms_state.count
+        m_b = batch_var * batch_count
+        M2 = m_a + m_b + delta**2 * rms_state.count * batch_count / tot_count
+        new_var = M2 / tot_count
+        new_count = tot_count
+
+        return RewardRMSState(
+            mean=new_mean, var=new_var, return_val=new_return_val, count=new_count
+        )
+
+    def normalize_reward(self, rms_state, reward):
+        return reward / jnp.sqrt(rms_state.var + 1e-8)
+
+    def update_reward_and_normalize(self, rms_state, obs, reward, done, batched=True):
+        rms_state = self.update_reward_rms(rms_state, obs, reward, done, batched)
+        return rms_state, self.normalize_reward(rms_state, reward)

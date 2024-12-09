@@ -9,6 +9,7 @@ from rejax.algos.algorithm import Algorithm, register_init
 from rejax.algos.mixins import (
     EpsilonGreedyMixin,
     NormalizeObservationsMixin,
+    NormalizeRewardsMixin,
     ReplayBufferMixin,
     TargetNetworkMixin,
 )
@@ -21,6 +22,7 @@ class DQN(
     ReplayBufferMixin,
     TargetNetworkMixin,
     NormalizeObservationsMixin,
+    NormalizeRewardsMixin,
     Algorithm,
 ):
     agent: nn.Module = struct.field(pytree_node=False, default=None)
@@ -29,8 +31,8 @@ class DQN(
 
     def make_act(self, ts):
         def act(obs, rng):
-            if getattr(self, "normalize_observations", False):
-                obs = self.normalize_obs(ts.rms_state, obs)
+            if self.normalize_observations:
+                obs = self.normalize_obs(ts.obs_rms_state, obs)
 
             obs = jnp.expand_dims(obs, 0)
             action = self.agent.apply(
@@ -56,7 +58,7 @@ class DQN(
             hidden_layer_sizes=(64, 64),
             action_dim=action_dim,
             activation=activation,
-            **agent_kwargs
+            **agent_kwargs,
         )
 
         return {"agent": agent}
@@ -92,8 +94,12 @@ class DQN(
             minibatch = ts.replay_buffer.sample(self.batch_size, rng_sample)
             if self.normalize_observations:
                 minibatch = minibatch._replace(
-                    obs=self.normalize_obs(ts.rms_state, minibatch.obs),
-                    next_obs=self.normalize_obs(ts.rms_state, minibatch.next_obs),
+                    obs=self.normalize_obs(ts.obs_rms_state, minibatch.obs),
+                    next_obs=self.normalize_obs(ts.obs_rms_state, minibatch.next_obs),
+                )
+            if self.normalize_rewards:
+                minibatch = minibatch._replace(
+                    reward=self.normalize_reward(ts.reward_rms_state, minibatch.reward)
                 )
 
             # Update network
@@ -135,7 +141,7 @@ class DQN(
 
         def sample_policy(rng):
             if self.normalize_observations:
-                last_obs = self.normalize_obs(ts.rms_state, ts.last_obs)
+                last_obs = self.normalize_obs(ts.obs_rms_state, ts.last_obs)
             else:
                 last_obs = ts.last_obs
 
@@ -152,7 +158,9 @@ class DQN(
             rng_steps, ts.env_state, actions, self.env_params
         )
         if self.normalize_observations:
-            ts = ts.replace(rms_state=self.update_rms(ts.rms_state, next_obs))
+            ts = ts.replace(obs_rms_state=self.update_obs_rms(ts.obs_rms_state, next_obs))
+        if self.normalize_rewards:
+            ts = ts.replace(reward_rms_state=self.update_reward_rms(ts.reward_rms_state, next_obs, rewards, dones))
 
         minibatch = Minibatch(
             obs=ts.last_obs,

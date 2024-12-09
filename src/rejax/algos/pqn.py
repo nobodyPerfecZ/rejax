@@ -16,6 +16,7 @@ from rejax.algos.algorithm import Algorithm, register_init
 from rejax.algos.mixins import (
     EpsilonGreedyMixin,
     NormalizeObservationsMixin,
+    NormalizeRewardsMixin,
     OnPolicyMixin,
 )
 from rejax.networks import DiscreteQNetwork, EpsilonGreedyPolicy
@@ -35,15 +36,21 @@ class TargetMinibatch(struct.PyTreeNode):
     targets: chex.Array
 
 
-class PQN(OnPolicyMixin, EpsilonGreedyMixin, NormalizeObservationsMixin, Algorithm):
+class PQN(
+    OnPolicyMixin,
+    EpsilonGreedyMixin,
+    NormalizeObservationsMixin,
+    NormalizeRewardsMixin,
+    Algorithm,
+):
     agent: nn.Module = struct.field(pytree_node=False, default=None)
     num_epochs: int = struct.field(pytree_node=False, default=1)
     td_lambda: chex.Scalar = struct.field(pytree_node=True, default=0.9)
 
     def make_act(self, ts):
         def act(obs, rng):
-            if getattr(self, "normalize_observations", False):
-                obs = self.normalize_obs(ts.rms_state, obs)
+            if self.normalize_observations:
+                obs = self.normalize_obs(ts.obs_rms_state, obs)
 
             obs = jnp.expand_dims(obs, 0)
             action = self.agent.apply(
@@ -63,7 +70,7 @@ class PQN(OnPolicyMixin, EpsilonGreedyMixin, NormalizeObservationsMixin, Algorit
             hidden_layer_sizes=(64, 64),
             action_dim=action_dim,
             activation=activation,
-            **agent_kwargs
+            **agent_kwargs,
         )
         return {"agent": agent}
 
@@ -124,8 +131,15 @@ class PQN(OnPolicyMixin, EpsilonGreedyMixin, NormalizeObservationsMixin, Algorit
             next_q = self.agent.apply(ts.q_ts.params, next_obs)
 
             if self.normalize_observations:
-                rms_state, next_obs = self.update_and_normalize(ts.rms_state, next_obs)
-                ts = ts.replace(rms_state=rms_state)
+                rms_state, next_obs = self.update_obs_and_normalize(
+                    ts.obs_rms_state, next_obs
+                )
+                ts = ts.replace(obs_rms_state=rms_state)
+            if self.normalize_rewards:
+                rms_state, reward = self.update_reward_and_normalize(
+                    ts.reward_rms_state, next_obs, reward, done
+                )
+                ts = ts.replace(reward_rms_state=rms_state)
 
             # Return updated state and transition
             transition = Trajectory(ts.last_obs, action, next_q, reward, done)
