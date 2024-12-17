@@ -99,9 +99,7 @@ class ReplayBufferMixin(VectorizedEnvMixin):
         if train_state1 is None and train_state2 is None:
             raise ValueError("Both train_state1 and train_state2 must be provided")
 
-        ts1, ts2 = train_state1, train_state2
-        ts = self.interpolate_ts(ts1, ts2, alpha)
-
+        ts = self.interpolate_ts(train_state1, train_state2, alpha)
         return ts, self.eval_callback(self, ts, ts.rng)
 
 
