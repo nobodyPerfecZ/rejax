@@ -189,65 +189,16 @@ class SAC(
 
     def interpolate_ts(self, ts1, ts2, alpha):
         interpolation_fn = lambda x, y: x * alpha + y * (1 - alpha)
-        ts = ts1
+        
+        params = jax.tree_util.tree_map(interpolation_fn, ts1.actor_ts.params, ts2.actor_ts.params)
+        obs_rms_state = jax.tree_util.tree_map(interpolation_fn, ts1.obs_rms_state, ts2.obs_rms_state)
+        reward_rms_state = jax.tree_util.tree_map(interpolation_fn, ts1.reward_rms_state, ts2.reward_rms_state)
 
-        # Interpolate between actor parameters
-        actor_params = jax.tree_util.tree_map(
-            interpolation_fn,
-            ts1.actor_ts.params,
-            ts2.actor_ts.params,
+        return ts1.replace(
+            actor_ts=ts1.actor_ts.replace(params=params),
+            obs_rms_state=obs_rms_state,
+            reward_rms_state=reward_rms_state,
         )
-
-        # Interpolate between actor parameters
-        critic_params = jax.tree_util.tree_map(
-            interpolation_fn,
-            ts1.critic_ts.params,
-            ts2.critic_ts.params,
-        )
-
-        # Interpolate between critic target parameters
-        critic_target_params = jax.tree_util.tree_map(
-            interpolation_fn,
-            ts1.critic_target_params.params,
-            ts2.critic_target_params.params,
-        )
-
-        # Interpolate between alpha parameters
-        alpha_params = jax.tree_util.tree_map(
-            interpolation_fn,
-            ts1.alpha_ts.params,
-            ts2.alpha_ts.params,
-        )
-
-        # Replace actor, critic, critic_target and alpha with the first train state
-        ts = ts.replace(
-            actor_ts=ts.actor_ts.replace(params=actor_params),
-            critic_ts=ts.critic_ts.replace(params=critic_params),
-            critic_target_params=ts.critic_target_params.replace(
-                params=critic_target_params
-            ),
-            alpha_ts=ts.alpha_ts.replace(params=alpha_params),
-        )
-
-        # Interpolate between observation normalization states
-        if self.normalize_observations:
-            obs_rms_state = jax.tree_util.tree_map(
-                interpolation_fn,
-                ts1.obs_rms_state,
-                ts2.obs_rms_state,
-            )
-            ts = ts.replace(obs_rms_state=obs_rms_state)
-
-        # Interpolate between reward normalization states
-        if self.normalize_rewards:
-            reward_rms_state = jax.tree_util.tree_map(
-                interpolation_fn,
-                ts1.reward_rms_state,
-                ts2.reward_rms_state,
-            )
-            ts = ts.replace(reward_rms_state=reward_rms_state)
-
-        return ts
 
     def collect_transitions(self, ts):
         rng, rng_action = jax.random.split(ts.rng)
