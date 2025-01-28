@@ -82,7 +82,6 @@ class DPPO(PPO):
         ts, _ = jax.lax.scan(update_epoch, ts, None, self.num_epochs)
         return ts
 
-
     def calculate_gae(self, ts, trajectories, last_val):
         def get_advantages(runner_state, transition):
             ts, gae, next_value, next_value_quants = runner_state
