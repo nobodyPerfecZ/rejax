@@ -157,6 +157,8 @@ class DQN(
         next_obs, env_state, rewards, dones, _ = self.vmap_step(
             rng_steps, ts.env_state, actions, self.env_params
         )
+        new_global_step = ts.global_step + self.num_envs
+        new_episode_return = (ts.episode_return + rewards) * (1 - dones)
         if self.normalize_observations:
             ts = ts.replace(obs_rms_state=self.update_obs_rms(ts.obs_rms_state, next_obs))
         if self.normalize_rewards:
@@ -172,7 +174,8 @@ class DQN(
         ts = ts.replace(
             last_obs=next_obs,
             env_state=env_state,
-            global_step=ts.global_step + self.num_envs,
+            global_step=new_global_step,
+            episode_return=new_episode_return,
         )
         return ts, minibatch
 

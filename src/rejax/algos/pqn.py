@@ -129,6 +129,8 @@ class PQN(
             transition = self.vmap_step(rng_step, ts.env_state, action, self.env_params)
             next_obs, env_state, reward, done, _ = transition
             next_q = self.agent.apply(ts.q_ts.params, next_obs)
+            new_global_step = ts.global_step + self.num_envs
+            new_episode_return = (ts.episode_return + reward) * (1 - done)
 
             if self.normalize_observations:
                 rms_state, next_obs = self.update_obs_and_normalize(
@@ -147,7 +149,8 @@ class PQN(
                 env_state=env_state,
                 last_obs=next_obs,
                 last_done=done,
-                global_step=ts.global_step + self.num_envs,
+                global_step=new_global_step,
+                episode_return=new_episode_return,
             )
             return ts, transition
 

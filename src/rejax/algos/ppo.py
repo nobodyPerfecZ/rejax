@@ -121,10 +121,16 @@ class PPO(OnPolicyMixin, NormalizeObservationsMixin, NormalizeRewardsMixin, Algo
 
     def interpolate_ts(self, ts1, ts2, alpha):
         interpolation_fn = lambda x, y: x * alpha + y * (1 - alpha)
-        
-        params = jax.tree_util.tree_map(interpolation_fn, ts1.actor_ts.params, ts2.actor_ts.params)
-        obs_rms_state = jax.tree_util.tree_map(interpolation_fn, ts1.obs_rms_state, ts2.obs_rms_state)
-        reward_rms_state = jax.tree_util.tree_map(interpolation_fn, ts1.reward_rms_state, ts2.reward_rms_state)
+
+        params = jax.tree_util.tree_map(
+            interpolation_fn, ts1.actor_ts.params, ts2.actor_ts.params
+        )
+        obs_rms_state = jax.tree_util.tree_map(
+            interpolation_fn, ts1.obs_rms_state, ts2.obs_rms_state
+        )
+        reward_rms_state = jax.tree_util.tree_map(
+            interpolation_fn, ts1.reward_rms_state, ts2.reward_rms_state
+        )
 
         return ts1.replace(
             actor_ts=ts1.actor_ts.replace(params=params),
@@ -157,6 +163,8 @@ class PPO(OnPolicyMixin, NormalizeObservationsMixin, NormalizeRewardsMixin, Algo
             # Step environment
             t = self.vmap_step(rng_steps, ts.env_state, action, self.env_params)
             next_obs, env_state, reward, done, _ = t
+            new_global_step = ts.global_step + self.num_envs
+            new_episode_return = (ts.episode_return + reward) * (1 - done)
 
             if self.normalize_observations:
                 obs_rms_state, next_obs = self.update_obs_and_normalize(
@@ -177,7 +185,8 @@ class PPO(OnPolicyMixin, NormalizeObservationsMixin, NormalizeRewardsMixin, Algo
                 env_state=env_state,
                 last_obs=next_obs,
                 last_done=done,
-                global_step=ts.global_step + self.num_envs,
+                global_step=new_global_step,
+                episode_return=new_episode_return,
             )
             return ts, transition
 
