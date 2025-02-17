@@ -15,7 +15,7 @@ from rejax.distortion import (
 from rejax.networks import DiscretePolicy, GaussianPolicy, VQuantileNetwork
 from rejax.statistics import kurtosis, skewness
 
-from .ppo import PPO, AdvantageMinibatch, Trajectory
+from .ppo import PPO, AdvantageMinibatch
 
 
 class DPPO(PPO):
@@ -177,6 +177,55 @@ class DPPO(PPO):
         loss = jnp.abs(jnp.where(delta < 0, (tau_hat - 1), tau_hat)) * clipped_l2_loss
 
         return loss.mean()
+
+
+class DPPOVar(DPPO):
+    std_coef: chex.Scalar = struct.field(pytree_node=True, default=1e-3)
+
+    def calculate_gae(self, ts, trajectories, last_val):
+        def get_advantages(runner_state, transition):
+            ts, gae, next_value, next_value_quants = runner_state
+
+            done, value_quants, reward = (
+                transition.done,
+                transition.value,
+                transition.reward.squeeze(),
+            )
+            value = self.risk_measure(value_quants)
+
+            delta = reward + self.gamma * next_value * (1 - done) - value
+            gae = delta + self.gamma * self.gae_lambda * (1 - done) * gae
+
+            target_value_quants = (
+                reward[:, jnp.newaxis]
+                + self.gamma * (1 - done)[:, jnp.newaxis] * next_value_quants
+            )
+
+            rng, new_rng = jax.random.split(ts.rng)
+            ts = ts.replace(rng=rng)
+            condition = (1 - done)[:, jnp.newaxis] * (
+                jax.random.uniform(new_rng, next_value_quants.shape) < self.sr_lambda
+            )
+            next_value_quants = jnp.where(condition, target_value_quants, value_quants)
+
+            runner_state = (ts, gae, value, next_value_quants)
+            metrics = (gae, target_value_quants)
+
+            return runner_state, metrics
+
+        last_val_risk = self.risk_measure(last_val)
+        runner_state, metrics = jax.lax.scan(
+            get_advantages,
+            (ts, jnp.zeros(last_val.shape[:-1]), last_val_risk, last_val),
+            trajectories,
+            reverse=True,
+        )
+        ts = runner_state[0]
+        advantages, targets = metrics
+        advantages = advantages + self.std_coef * -advantages.std(
+            axis=-1, keepdims=True
+        )
+        return ts, advantages, targets
 
 
 class DPPOKurt(DPPO):

@@ -1,7 +1,7 @@
 from .algorithm import Algorithm
-from .dppo import DPPO, DPPOKurt, DPPOSkew
+from .dppo import DPPO, DPPOKurt, DPPOSkew, DPPOVar
 from .dqn import DQN
-from .dsac import DSAC, DSACKurt, DSACSkew
+from .dsac import DSAC, DSACKurt, DSACSkew, DSACVar
 from .iqn import IQN
 from .mixins import (
     EpsilonGreedyMixin,
@@ -20,10 +20,12 @@ from .td3 import TD3
 __all__ = [
     "Algorithm",
     "DPPO",
+    "DPPOVar",
     "DPPOKurt",
     "DPPOSkew",
     "DQN",
     "DSAC",
+    "DSACVar",
     "DSACKurt",
     "DSACSkew",
     "IQN",

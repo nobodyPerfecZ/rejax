@@ -181,6 +181,45 @@ class DSAC(SAC):
         return loss
 
 
+class DSACVar(DSAC):
+    std_coef: chex.Scalar = struct.field(pytree_node=True, default=1e-3)
+
+    def udpate_actor(self, ts, mb):
+        rng, action_rng = jax.random.split(ts.rng)
+        ts = ts.replace(rng=rng)
+        alpha = jnp.exp(ts.alpha_ts.params["log_alpha"])
+
+        def actor_loss_fn(params):
+            if self.discrete:
+                logprob = jnp.log(
+                    self.actor.apply(params, mb.obs, method="_action_dist").probs
+                )
+                qs = self.vmap_critic(ts.critic_ts.params, mb.obs)
+                qs = self.risk_measure(qs)
+                loss_pi = (
+                    self.std_coef * -qs.min(axis=0).std(axis=-1, keepdims=True)
+                    + alpha * logprob
+                    - qs.min(axis=0)
+                )
+                loss_pi = jnp.sum(jnp.exp(logprob) * loss_pi, axis=1)
+            else:
+                action, logprob = self.actor.apply(
+                    params, mb.obs, action_rng, method="action_log_prob"
+                )
+                qs = self.vmap_critic(ts.critic_ts.params, mb.obs, action)
+                qs = self.risk_measure(qs)
+                loss_pi = (
+                    self.std_coef * -qs.min(axis=0).std(axis=-1, keepdims=True)
+                    + alpha * logprob
+                    - qs.min(axis=0)
+                )
+            return loss_pi.mean(), logprob
+
+        grads, logprob = jax.grad(actor_loss_fn, has_aux=True)(ts.actor_ts.params)
+        ts = ts.replace(actor_ts=ts.actor_ts.apply_gradients(grads=grads))
+        return ts, logprob
+
+
 class DSACKurt(DSAC):
     kurt_coef: chex.Scalar = struct.field(pytree_node=True, default=1e-4)
 
