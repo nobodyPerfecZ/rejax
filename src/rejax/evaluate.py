@@ -36,7 +36,7 @@ def evaluate_single(
             env_state=env_state,
             last_obs=obs,
             done=done,
-            critic_=critic(obs).squeeze(),
+            critic_=critic(obs, action).squeeze(),
             return_=state.return_ + reward.squeeze(),
             length=state.length + 1,
         )
