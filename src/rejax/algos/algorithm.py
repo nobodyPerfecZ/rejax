@@ -40,8 +40,9 @@ class Algorithm(struct.PyTreeNode):
 
         def eval_callback(algo, ts, rng):
             act = algo.make_act(ts)
+            critic = algo.make_critic(ts)
             max_steps = algo.env_params.max_steps_in_episode
-            return evaluate(act, rng, env, env_params, 128, max_steps)
+            return evaluate(act, critic, rng, env, env_params, 128, max_steps)
 
         return cls(
             env=env,

@@ -49,6 +49,16 @@ class SAC(
 
         return act
 
+    def make_critic(self, ts):
+        def critic(obs):
+            if self.normalize_observations:
+                obs = self.normalize_obs(ts.obs_rms_state, obs)
+
+            obs = jnp.expand_dims(obs, 0)
+            return self.critic.apply(ts.critic_ts.params, obs)
+
+        return critic
+
     @classmethod
     def create_agent(cls, config, env, env_params):
         agent_kwargs = config.pop("agent_kwargs", {})

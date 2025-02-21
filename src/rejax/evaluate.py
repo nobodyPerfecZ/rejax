@@ -12,12 +12,14 @@ class EvalState(NamedTuple):
     env_state: Any
     last_obs: chex.Array
     done: bool = False
+    critic_: float = 0.0
     return_: float = 0.0
     length: int = 0
 
 
 def evaluate_single(
     act: Callable[[chex.Array, chex.PRNGKey], chex.Array],  # act(obs, rng) -> action
+    critic: Callable[[chex.Array], chex.Array],  # critic(obs) -> value
     env,
     env_params,
     rng,
@@ -34,6 +36,7 @@ def evaluate_single(
             env_state=env_state,
             last_obs=obs,
             done=done,
+            critic_=critic(obs).squeeze(),
             return_=state.return_ + reward.squeeze(),
             length=state.length + 1,
         )
@@ -49,12 +52,13 @@ def evaluate_single(
         step,
         state,
     )
-    return state.length, state.return_
+    return state.length, state.return_, state.critic_
 
 
-@partial(jax.jit, static_argnames=("act", "env", "num_seeds"))
+@partial(jax.jit, static_argnames=("act", "critic", "env", "num_seeds"))
 def evaluate(
     act: Callable[[chex.Array, chex.PRNGKey], chex.Array],
+    critic: Callable[[chex.Array], chex.Array],
     rng: chex.PRNGKey,
     env: environment.Environment,
     env_params: Any,
@@ -80,5 +84,5 @@ def evaluate(
         max_steps_in_episode = env_params.max_steps_in_episode
 
     seeds = jax.random.split(rng, num_seeds)
-    vmap_collect = jax.vmap(evaluate_single, in_axes=(None, None, None, 0, None))
-    return vmap_collect(act, env, env_params, seeds, max_steps_in_episode)
+    vmap_collect = jax.vmap(evaluate_single, in_axes=(None, None, None, None, 0, None))
+    return vmap_collect(act, critic, env, env_params, seeds, max_steps_in_episode)
