@@ -55,7 +55,9 @@ class SAC(
                 obs = self.normalize_obs(ts.obs_rms_state, obs)
 
             obs = jnp.expand_dims(obs, 0)
-            return self.critic.apply(ts.critic_ts.params, obs, action)
+            action = jnp.expand_dims(action, 0)
+            qs = self.vmap_critic(ts.critic_ts.params, obs, action)
+            return jnp.squeeze(qs.min(axis=0))
 
         return critic
 

@@ -58,7 +58,9 @@ class PPO(OnPolicyMixin, NormalizeObservationsMixin, NormalizeRewardsMixin, Algo
                 obs = self.normalize_obs(ts.obs_rms_state, obs)
 
             obs = jnp.expand_dims(obs, 0)
-            return self.critic.apply(ts.critic_ts.params, obs)
+            action = jnp.expand_dims(action, 0)
+            critic = self.critic.apply(ts.critic_ts.params, obs)
+            return jnp.squeeze(critic)
 
         return critic
 
