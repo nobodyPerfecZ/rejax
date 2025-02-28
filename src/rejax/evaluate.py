@@ -42,9 +42,11 @@ def evaluate_single(
         )
         return state
 
-    rng_reset, rng_eval = jax.random.split(rng)
+    rng_reset, rng_eval, rng_act = jax.random.split(rng, 3)
     obs, env_state = env.reset(rng_reset, env_params)
-    state = EvalState(rng_eval, env_state, obs)
+    action = act(obs, rng_act)
+    critic_ = critic(obs, action)
+    state = EvalState(rng_eval, env_state, obs, critic_=critic_)
     state = jax.lax.while_loop(
         lambda s: jnp.logical_and(
             s.length < max_steps_in_episode, jnp.logical_not(s.done)
