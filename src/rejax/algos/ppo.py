@@ -11,8 +11,8 @@ from jax import numpy as jnp
 from rejax.algos.algorithm import Algorithm, register_init
 from rejax.algos.mixins import (
     NormalizeObservationsMixin,
-    OnPolicyMixin,
     NormalizeRewardsMixin,
+    OnPolicyMixin,
 )
 from rejax.networks import DiscretePolicy, GaussianPolicy, VNetwork
 
@@ -206,8 +206,8 @@ class PPO(OnPolicyMixin, NormalizeObservationsMixin, NormalizeRewardsMixin, Algo
         return ts, trajectories
 
     def calculate_gae(self, trajectories, last_val):
-        def get_advantages(advantage_and_next_value, transition):
-            advantage, next_value = advantage_and_next_value
+        def get_advantages(runner_state, transition):
+            advantage, next_value = runner_state
             delta = (
                 transition.reward.squeeze()  # For gymnax envs that return shape (1, )
                 + self.gamma * next_value * (1 - transition.done)

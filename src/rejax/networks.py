@@ -245,13 +245,18 @@ class DeterministicPolicy(nn.Module):
 
 
 # Value networks
-
-
 class VNetwork(MLP):
     @nn.compact
     def __call__(self, obs):
         x = super().__call__(obs)
         return nn.Dense(1)(x).squeeze(1)
+
+
+class VHigherOrderNetwork(MLP):
+    @nn.compact
+    def __call__(self, obs):
+        x = super().__call__(obs)
+        return nn.Dense(2)(x)
 
 
 class VQuantileNetwork(MLP):

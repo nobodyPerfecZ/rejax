@@ -12,6 +12,7 @@ from .mixins import (
 )
 from .ppo import PPO
 from .ppo_crs import PPOCVaRRejectionSampling
+from .ppo_higher_order import PPOKurt, PPOSkew
 from .pqn import PQN
 from .sac import SAC
 from .sac_crs import SACCVaRRejectionSampling
@@ -31,6 +32,8 @@ __all__ = [
     "IQN",
     "PPO",
     "PPOCVaRRejectionSampling",
+    "PPOKurt",
+    "PPOSkew",
     "PQN",
     "SAC",
     "SACCVaRRejectionSampling",
