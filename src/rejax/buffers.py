@@ -24,7 +24,7 @@ class CircularBuffer(struct.PyTreeNode):
 
     @jax.jit
     def append(self, a: chex.ArrayTree) -> "CircularBuffer":
-        data = jax.tree_map(lambda arr, a_: arr.at[self.index].set(a_), self.data, a)
+        data = jax.tree.map(lambda arr, a_: arr.at[self.index].set(a_), self.data, a)
         next_index = (self.index + 1) % self.size
         full = jnp.logical_or(self.full, next_index == 0)
         return self.replace(data=data, index=next_index, full=full)
@@ -36,7 +36,7 @@ class CircularBuffer(struct.PyTreeNode):
 
         idx = self.index + jnp.arange(batch_size)
         idx = idx % self.size
-        data = jax.tree_map(lambda arr, b: arr.at[idx].set(b), self.data, batch)
+        data = jax.tree.map(lambda arr, b: arr.at[idx].set(b), self.data, batch)
 
         next_index = (self.index + batch_size) % self.size
         full = jnp.logical_or(self.full, next_index == 0)
@@ -104,4 +104,4 @@ class ReplayBuffer(CircularBuffer):
             Minibatch: A minibatch of randomly sampled transitions.
         """
         minibatch_index = jax.random.randint(rng, (num,), 0, self.num_entries)
-        return jax.tree_map(lambda arr: arr[minibatch_index], self.data)
+        return jax.tree.map(lambda arr: arr[minibatch_index], self.data)

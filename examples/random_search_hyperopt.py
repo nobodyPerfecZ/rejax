@@ -81,7 +81,7 @@ returns = returns[:, 0].mean(axis=1)
 # Find the best configuration and get its final return and hyperparameter configuration
 best_index = returns.argmax()
 best_return = returns[best_index]
-best_config = jax.tree_map(lambda c: c[best_index], config_dicts)
+best_config = jax.tree.map(lambda c: c[best_index], config_dicts)
 
 print(f"Best config: {best_config}")
 print(f"with return: {best_return}")

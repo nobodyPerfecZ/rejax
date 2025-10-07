@@ -88,7 +88,7 @@ class ReplayBufferMixin(VectorizedEnvMixin):
         )
 
         if not self.skip_initial_evaluation:
-            evaluation = jax.tree_map(
+            evaluation = jax.tree.map(
                 lambda i, ev: jnp.concatenate((jnp.expand_dims(i, 0), ev)),
                 initial_evaluation,
                 evaluation,
@@ -155,7 +155,7 @@ class OnPolicyMixin(VectorizedEnvMixin):
         ts, evaluation = jax.lax.scan(eval_iteration, ts, None, num_evals)
 
         if not self.skip_initial_evaluation:
-            evaluation = jax.tree_map(
+            evaluation = jax.tree.map(
                 lambda i, ev: jnp.concatenate((jnp.expand_dims(i, 0), ev)),
                 initial_evaluation,
                 evaluation,
@@ -178,7 +178,7 @@ class TargetNetworkMixin(struct.PyTreeNode):
     polyak: chex.Scalar = struct.field(pytree_node=True, default=0.99)
 
     def polyak_update(self, params, target_params):
-        return jax.tree_map(
+        return jax.tree.map(
             lambda p, tp: tp * self.polyak + p * (1 - self.polyak),
             params,
             target_params,

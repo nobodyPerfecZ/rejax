@@ -43,7 +43,7 @@ class Logger:
             return x
 
         # Compute mean over initial seeds for wandb, log all stuff for json
-        _log_step = jax.tree_map(convert, self._log_step)
+        _log_step = jax.tree.map(convert, self._log_step)
         _log_step = pd.DataFrame(_log_step)
 
         self._log.append(
@@ -183,7 +183,7 @@ def main(args, config):
     if args.save_all_checkpoints:
         logger.write_checkpoint(train_state)
     else:
-        train_state = jax.tree_map(lambda x: x[0], train_state)
+        train_state = jax.tree.map(lambda x: x[0], train_state)
         logger.write_checkpoint(train_state)
 
 

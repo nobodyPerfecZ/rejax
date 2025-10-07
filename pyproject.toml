@@ -15,7 +15,7 @@ dependencies = [
     "gymnax>=0.0.8",
     "jax>=0.4.34",
 ]
-requires-python = ">=3.10"
+requires-python = ">=3.13"
 readme = "README.md"
 license = {text = "Apache-2.0"}
 

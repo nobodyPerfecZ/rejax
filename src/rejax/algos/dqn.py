@@ -121,7 +121,7 @@ class DQN(
                 ts.global_step % self.target_update_freq
                 <= old_global_step % self.target_update_freq
             )
-            target_params = jax.tree_map(
+            target_params = jax.tree.map(
                 lambda q, qt: jax.lax.select(update_target_params, q, qt),
                 self.polyak_update(ts.q_ts.params, ts.q_target_params),
                 ts.q_target_params,
@@ -160,9 +160,15 @@ class DQN(
         new_global_step = ts.global_step + self.num_envs
         new_episode_return = (ts.episode_return + rewards) * (1 - dones)
         if self.normalize_observations:
-            ts = ts.replace(obs_rms_state=self.update_obs_rms(ts.obs_rms_state, next_obs))
+            ts = ts.replace(
+                obs_rms_state=self.update_obs_rms(ts.obs_rms_state, next_obs)
+            )
         if self.normalize_rewards:
-            ts = ts.replace(reward_rms_state=self.update_reward_rms(ts.reward_rms_state, next_obs, rewards, dones))
+            ts = ts.replace(
+                reward_rms_state=self.update_reward_rms(
+                    ts.reward_rms_state, next_obs, rewards, dones
+                )
+            )
 
         minibatch = Minibatch(
             obs=ts.last_obs,
