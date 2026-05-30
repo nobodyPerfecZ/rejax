@@ -12,12 +12,14 @@ class EvalState(NamedTuple):
     env_state: Any
     last_obs: chex.Array
     done: bool = False
+    critic_: float = 0.0
     return_: float = 0.0
     length: int = 0
 
 
 def evaluate_single(
     act: Callable[[chex.Array, chex.PRNGKey], chex.Array],  # act(obs, rng) -> action
+    critic: Callable[[chex.Array, chex.Array], chex.Array],  # critic(obs, act) -> value
     env,
     env_params,
     rng,
@@ -39,14 +41,18 @@ def evaluate_single(
             env_state=env_state,
             last_obs=obs,
             done=done,
+            critic_=critic(obs, action),  # ty:ignore[invalid-argument-type]
             return_=state.return_ + reward.squeeze(),
             length=state.length + 1,
         )
         return state, state.env_state
 
-    rng_reset, rng_eval = jax.random.split(rng)
+    rng_reset, rng_eval, rng_act = jax.random.split(rng, 3)
     obs, env_state = env.reset(rng_reset, env_params)
-    state = EvalState(rng_eval, env_state, obs)
+    action = act(obs, rng_act)
+    critic_ = critic(obs, action)
+
+    state = EvalState(rng_eval, env_state, obs, critic_=critic_)  # ty:ignore[invalid-argument-type]
     state, trajectory = jax.lax.scan(
         # Decides to perform an environment step if done is False
         lambda s, _: jax.lax.cond(s.done, no_step, step, s, _),
@@ -54,18 +60,22 @@ def evaluate_single(
         None,
         length=max_steps_in_episode,
     )
-    return state.length, state.return_, trajectory
+    return state.length, state.return_, state.critic_, trajectory
 
 
-@partial(jax.jit, static_argnames=("act", "env", "num_seeds", "max_steps_in_episode"))
+@partial(
+    jax.jit,
+    static_argnames=("act", "critic", "env", "num_seeds", "max_steps_in_episode"),
+)
 def evaluate(
     act: Callable[[chex.Array, chex.PRNGKey], chex.Array],
+    critic: Callable[[chex.Array, chex.Array], chex.Array],
     rng: chex.PRNGKey,
     env: environment.Environment,
     env_params: Any,
     num_seeds: int = 128,
     max_steps_in_episode: int | None = None,
-) -> tuple[chex.Array, chex.Array, chex.Array]:
+) -> tuple[chex.Array, chex.Array, chex.Array, chex.Array]:
     """Evaluate a policy given by `act` on `num_seeds` environments.
 
     Args:
@@ -85,5 +95,5 @@ def evaluate(
         max_steps_in_episode = env_params.max_steps_in_episode
 
     seeds = jax.random.split(rng, num_seeds)
-    vmap_collect = jax.vmap(evaluate_single, in_axes=(None, None, None, 0, None))
-    return vmap_collect(act, env, env_params, seeds, max_steps_in_episode)
+    vmap_collect = jax.vmap(evaluate_single, in_axes=(None, None, None, None, 0, None))
+    return vmap_collect(act, critic, env, env_params, seeds, max_steps_in_episode)

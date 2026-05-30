@@ -17,10 +17,11 @@ from rejax.algos.mixins import (
 )
 from rejax.buffers import Minibatch
 from rejax.networks import ImplicitQuantileNetwork
+from rejax.statistics import explained_variance
 
 
-def EpsilonGreedyPolicy(iqn: nn.Module) -> type[nn.Module]:  # noqa:  N802
-    class EpsilonGreedyPolicy(iqn):
+def EpsilonGreedyPolicy(iqn: nn.Module) -> type[nn.Module]:
+    class EpsilonGreedyPolicy(iqn):  # ty:ignore[invalid-base]
         def _action_dist(self, obs, rng, epsilon):
             q = self.q(obs, rng)
             return distrax.EpsilonGreedy(q, epsilon=epsilon)
@@ -57,7 +58,7 @@ class IQN(
             action = self.agent.apply(
                 ts.q_ts.params, obs, rng, epsilon=0.005, method="act"
             )
-            return jnp.squeeze(action)
+            return jnp.squeeze(action)  # ty:ignore[invalid-argument-type]
 
         return act
 
@@ -65,13 +66,15 @@ class IQN(
     def create_agent(cls, config, env, env_params):
         agent_kwargs = config.pop("agent_kwargs", {})
         activation = agent_kwargs.pop("activation", "swish")
-        agent_kwargs["activation"] = getattr(nn, activation)
+        activation = getattr(nn, activation)
         hidden_layer_sizes = agent_kwargs.pop("hidden_layer_sizes", (64, 64))
         agent_kwargs["hidden_layer_sizes"] = tuple(hidden_layer_sizes)
 
         action_dim = env.action_space(env_params).n
-        agent = EpsilonGreedyPolicy(ImplicitQuantileNetwork)(
-            action_dim=action_dim, **agent_kwargs
+        agent = EpsilonGreedyPolicy(ImplicitQuantileNetwork)(  # ty:ignore[invalid-argument-type]
+            action_dim=action_dim,
+            activation=activation,
+            **agent_kwargs,
         )
         return {"agent": agent}
 
@@ -80,7 +83,7 @@ class IQN(
         obs_ph = jnp.empty([1, *self.env.observation_space(self.env_params).shape])
         q_params = self.agent.init(rng, obs_ph, rng)
         tx = optax.chain(
-            optax.clip(self.max_grad_norm),
+            optax.clip_by_global_norm(self.max_grad_norm),
             optax.adam(learning_rate=self.learning_rate),
         )
         q_ts = TrainState.create(apply_fn=(), params=q_params, tx=tx)
@@ -99,7 +102,7 @@ class IQN(
         ts = ts.replace(replay_buffer=ts.replay_buffer.extend(batch))
 
         # Perform updates to q network
-        def update_iteration(ts):
+        def update_iteration(ts, unused):
             # Sample minibatch
             rng, rng_sample = jax.random.split(ts.rng)
             ts = ts.replace(rng=rng)
@@ -109,17 +112,37 @@ class IQN(
                     obs=self.normalize_obs(ts.obs_rms_state, minibatch.obs),
                     next_obs=self.normalize_obs(ts.obs_rms_state, minibatch.next_obs),
                 )
+            if self.normalize_rewards:
+                minibatch = minibatch._replace(
+                    reward=self.normalize_rew(ts.rew_rms_state, minibatch.reward)
+                )
 
             # Update network
-            ts = self.update(ts, minibatch)
-            return ts
+            ts, loss_metrics = self.update(ts, minibatch)
+            return ts, loss_metrics
 
         def do_updates(ts):
-            return jax.lax.fori_loop(
-                0, self.num_epochs, lambda _, ts: update_iteration(ts), ts
-            )
+            ts, loss_metrics = jax.lax.scan(update_iteration, ts, None, self.num_epochs)
+            return ts, loss_metrics
 
-        ts = jax.lax.cond(start_training, lambda: do_updates(ts), lambda: ts)
+        mock_metrics = {
+            "q/loss": jnp.zeros((self.num_epochs,)),
+            "q/q_values": jnp.zeros((self.num_epochs,)),
+            "q/q_targets": jnp.zeros((self.num_epochs,)),
+            "q/total_loss": jnp.zeros((self.num_epochs,)),
+            "q/explained_variance": jnp.zeros((self.num_epochs,)),
+            "q/grad_norm": jnp.zeros((self.num_epochs,)),
+            "q/param_norm": jnp.zeros((self.num_epochs,)),
+            "q/momentum_norm": jnp.zeros((self.num_epochs,)),
+            "q/variance_norm": jnp.zeros((self.num_epochs,)),
+        }
+
+        ts, loss_metrics = jax.lax.cond(
+            start_training,
+            do_updates,
+            lambda ts: (ts, mock_metrics),
+            ts,
+        )
 
         # Update target network
         if self.target_update_freq == 1:
@@ -135,7 +158,10 @@ class IQN(
                 ts.q_target_params,
             )
         ts = ts.replace(q_target_params=target_params)
-        return ts
+
+        avg_loss_metrics = jax.tree.map(lambda x: jnp.mean(x, axis=0), loss_metrics)
+
+        return ts, avg_loss_metrics
 
     def collect_transitions(self, ts, epsilon, uniform=False):
         # Sample actions
@@ -164,6 +190,8 @@ class IQN(
         next_obs, env_state, rewards, dones, _ = self.vmap_step(
             rng_steps, ts.env_state, actions, self.env_params
         )
+        new_global_step = ts.global_step + self.num_envs
+        new_episode_return = (ts.episode_return + rewards) * (1 - dones)
         if self.normalize_observations:
             ts = ts.replace(
                 obs_rms_state=self.update_obs_rms(ts.obs_rms_state, next_obs)
@@ -183,17 +211,12 @@ class IQN(
         ts = ts.replace(
             last_obs=next_obs,
             env_state=env_state,
-            global_step=ts.global_step + self.num_envs,
+            global_step=new_global_step,
+            episode_return=new_episode_return,
         )
         return ts, minibatch
 
     def update(self, ts, mb):
-        # Normalize rewards
-        if self.normalize_rewards:
-            rewards = self.normalize_rew(ts.rew_rms_state, mb.reward)
-        else:
-            rewards = mb.reward
-
         # Move tau to axis 1, leaving batch as leading axis
         vmapped_apply = jax.vmap(self.agent.apply, in_axes=(None, None, 0), out_axes=1)
 
@@ -207,9 +230,9 @@ class IQN(
             ts.q_ts.params, mb.next_obs, rng_action, method="best_action"
         )
         zs, _ = vmapped_apply(ts.q_ts.params, mb.next_obs, rng_tau_prime)
-        best_z = jnp.take_along_axis(zs, best_action[:, None, None], axis=2).squeeze(2)
+        best_z = jnp.take_along_axis(zs, best_action[:, None, None], axis=2).squeeze(2)  # ty:ignore[invalid-argument-type]
 
-        targets = rewards[:, None] + self.gamma * (1 - mb.done[:, None]) * best_z
+        targets = mb.reward[:, None] + self.gamma * (1 - mb.done[:, None]) * best_z
         assert targets.shape == (
             self.batch_size,
             self.num_tau_prime_samples,
@@ -223,19 +246,47 @@ class IQN(
             return jnp.abs(tau - (td_err < 0)) * l / self.kappa
 
         def loss_fn(q_params):
-            # tau has shape (batch, num_tau_samples)
             z, tau = vmapped_apply(q_params, mb.obs, rng_tau)
-
-            # after taking actions, z has shape (batch, num_tau_samples, action_dim)
             z = jnp.take_along_axis(z, mb.action[:, None, None], axis=2).squeeze(2)
+            assert z.shape == (self.batch_size, self.num_tau_samples), z.shape
 
-            # td_err has shape (batch, num_tau_samples, num_tau_prime_samples)
             td_err = jax.vmap(lambda x, y: x[None, :] - y[:, None])(targets, z)
 
-            # before sum, loss has shape (batch, num_tau_samples, num_tau_prime_samples)
+            assert td_err.shape == (
+                self.batch_size,
+                self.num_tau_samples,
+                self.num_tau_prime_samples,
+            )
+            assert tau.shape == (self.batch_size, self.num_tau_samples)
+            assert rho(td_err, tau).shape == (
+                self.batch_size,
+                self.num_tau_samples,
+                self.num_tau_prime_samples,
+            )
             loss = rho(td_err, tau).sum(axis=1)
-            return loss.mean()
+            mean_loss = loss.mean()
+            q_values = z.mean(axis=1)
+            q_targets = targets.mean(axis=1)
+            return mean_loss, (
+                (q_targets, q_values),
+                {
+                    "q/loss": mean_loss,
+                    "q/q_values": q_values.mean(),
+                    "q/q_targets": q_targets.mean(),
+                },
+            )
 
-        grads = jax.grad(loss_fn)(ts.q_ts.params)
+        (loss, ((q_targets, q_values), aux)), grads = jax.value_and_grad(
+            loss_fn, has_aux=True
+        )(ts.q_ts.params)
+        # jax.debug.print("grads {}", jnp.abs(jnp.hstack([a.ravel() for a in jax.tree_leaves(grads)])).mean())
         ts = ts.replace(q_ts=ts.q_ts.apply_gradients(grads=grads))
-        return ts
+        return ts, {
+            "q/total_loss": loss,
+            "q/explained_variance": explained_variance(q_targets, q_values),
+            "q/grad_norm": optax.global_norm(grads),
+            "q/param_norm": optax.global_norm(ts.q_ts.params),
+            "q/momentum_norm": optax.global_norm(ts.q_ts.opt_state[1][0].mu),
+            "q/variance_norm": optax.global_norm(ts.q_ts.opt_state[1][0].nu),
+            **aux,
+        }

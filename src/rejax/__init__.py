@@ -1,12 +1,46 @@
-from rejax.algos import DQN, IQN, PPO, PQN, SAC, TD3, Algorithm
+from rejax.algos import (
+    DPPO,
+    DQN,
+    DSAC,
+    IQN,
+    PPO,
+    PQN,
+    SAC,
+    TD3,
+    Algorithm,
+    DPPOKurt,
+    DPPOSkew,
+    DPPOVar,
+    DSACKurt,
+    DSACSkew,
+    DSACVar,
+    PPOCVaRRejectionSampling,
+    PPOKurt,
+    PPOSkew,
+    SACCVaRRejectionSampling,
+    SACEta,
+)
 
 
 _algos = {
+    "dppo": DPPO,
+    "dppo_var": DPPOVar,
+    "dppo_kurt": DPPOKurt,
+    "dppo_skew": DPPOSkew,
     "dqn": DQN,
+    "dsac": DSAC,
+    "dsac_var": DSACVar,
+    "dsac_kurt": DSACKurt,
+    "dsac_skew": DSACSkew,
     "iqn": IQN,
     "ppo": PPO,
+    "ppo_crs": PPOCVaRRejectionSampling,
+    "ppo_kurt": PPOKurt,
+    "ppo_skew": PPOSkew,
     "pqn": PQN,
     "sac": SAC,
+    "sac_crs": SACCVaRRejectionSampling,
+    "sac_eta": SACEta,
     "td3": TD3,
 }
 
@@ -17,11 +51,22 @@ def get_algo(algo: str) -> Algorithm:
 
 
 __all__ = [
+    "DPPO",
+    # Algorithms
     "DQN",
+    "DSAC",
     "IQN",
     "PPO",
     "PQN",
     "SAC",
     "TD3",
+    "DPPOKurt",
+    "DPPOSkew",
+    "DSACKurt",
+    "DSACSkew",
+    "PPOCVaRRejectionSampling",
+    "PPOKurt",
+    "SACCVaRRejectionSampling",
+    "SACEta",
     "get_algo",
 ]

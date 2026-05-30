@@ -23,6 +23,7 @@ from rejax.networks import (
     QNetwork,
     SquashedGaussianPolicy,
 )
+from rejax.statistics import explained_variance
 
 
 class SAC(
@@ -40,35 +41,60 @@ class SAC(
 
     def make_act(self, ts):
         def act(obs, rng):
-            if getattr(self, "normalize_observations", False):
+            if self.normalize_observations:
                 obs = self.normalize_obs(ts.obs_rms_state, obs)
 
             obs = jnp.expand_dims(obs, 0)
             action = self.actor.apply(ts.actor_ts.params, obs, rng, method="act")
-            return jnp.squeeze(action)
+            return jnp.squeeze(action)  # ty:ignore[invalid-argument-type]
 
         return act
+
+    def make_critic(self, ts):
+        def critic(obs, action):
+            if self.normalize_observations:
+                obs = self.normalize_obs(ts.obs_rms_state, obs)
+
+            obs = jnp.expand_dims(obs, 0)
+            if self.discrete:
+                qs = self.vmap_critic(ts.critic_ts.params, obs)
+                qs = qs[:, 0, action]
+            else:
+                action = jnp.expand_dims(action, 0)
+                qs = self.vmap_critic(ts.critic_ts.params, obs, action)
+            return jnp.squeeze(qs.min(axis=0))
+
+        return critic
 
     @classmethod
     def create_agent(cls, config, env, env_params):
         agent_kwargs = config.pop("agent_kwargs", {})
         activation = agent_kwargs.pop("activation", "relu")
-        agent_kwargs["activation"] = getattr(nn, activation)
-        layers = config.pop("hidden_layer_sizes", (64, 64))
+        activation = getattr(nn, activation)
+        layers = agent_kwargs.pop("hidden_layer_sizes", (64, 64))
         agent_kwargs["hidden_layer_sizes"] = tuple(layers)
 
         action_space = env.action_space(env_params)
-        if isinstance(action_space, gymnax.environments.spaces.Discrete):
-            actor = DiscretePolicy(action_space.n, **agent_kwargs)
-            critic = DiscreteQNetwork(action_dim=action_space.n, **agent_kwargs)
-        else:
-            actor = SquashedGaussianPolicy(
-                np.prod(action_space.shape),
-                (action_space.low, action_space.high),
-                log_std_range=(-10, 2),
+        if isinstance(action_space, gymnax.environments.spaces.Discrete):  # ty:ignore[possibly-missing-submodule]
+            actor = DiscretePolicy(
+                action_dim=action_space.n,
+                activation=activation,
                 **agent_kwargs,
             )
-            critic = QNetwork(**agent_kwargs)
+            critic = DiscreteQNetwork(
+                action_dim=action_space.n,
+                activation=activation,
+                **agent_kwargs,
+            )
+        else:
+            actor = SquashedGaussianPolicy(
+                action_dim=np.prod(action_space.shape),
+                action_range=(action_space.low, action_space.high),
+                activation=activation,
+                log_std_range=(-5, 2),
+                **agent_kwargs,
+            )
+            critic = QNetwork(activation=activation, **agent_kwargs)
         return {"actor": actor, "critic": critic}
 
     @property
@@ -105,7 +131,7 @@ class SAC(
             )
 
         tx = optax.chain(
-            optax.clip(self.max_grad_norm),
+            optax.clip_by_global_norm(self.max_grad_norm),
             optax.adam(learning_rate=self.learning_rate),
         )
         actor_ts = TrainState.create(apply_fn=(), params=actor_params, tx=tx)
@@ -113,7 +139,7 @@ class SAC(
         critic_target_params = critic_params
 
         if self.target_entropy is None:
-            self.target_entropy = -self.env.action_space(self.env_params).shape[0]
+            self.target_entropy = -self.env.action_space(self.env_params).shape[0]  # ty:ignore[invalid-assignment]
 
         alpha_params = FrozenDict({"log_alpha": jnp.array(0.0)})
         alpha_ts = TrainState.create(apply_fn=(), params=alpha_params, tx=tx)
@@ -148,16 +174,49 @@ class SAC(
                 )
 
             # Update networks
-            ts = self.update(ts, minibatch)
-            return ts
+            return self.update(ts, minibatch)
 
         def do_updates(ts):
-            return jax.lax.fori_loop(
-                0, self.num_epochs, lambda _, ts: update_iteration(ts), ts
+            return jax.lax.scan(
+                lambda ts, _: update_iteration(ts),
+                ts,
+                None,
+                length=self.num_epochs,
             )
 
         start_training = ts.global_step > self.fill_buffer
-        ts = jax.lax.cond(start_training, lambda: do_updates(ts), lambda: ts)
+
+        # TODO: Improve this later on!
+        ts, loss_metrics = jax.lax.cond(
+            start_training,
+            lambda: do_updates(ts),
+            lambda: (
+                ts,
+                {
+                    "actor/total_loss": jnp.zeros((self.num_epochs,)),
+                    "actor/log_prob": jnp.zeros((self.num_epochs,)),
+                    "actor/entropy": jnp.zeros((self.num_epochs,)),
+                    "actor/qs": jnp.zeros((self.num_epochs,)),
+                    "actor/grad_norm": jnp.zeros((self.num_epochs,)),
+                    "actor/param_norm": jnp.zeros((self.num_epochs,)),
+                    "actor/momentum_norm": jnp.zeros((self.num_epochs,)),
+                    "actor/variance_norm": jnp.zeros((self.num_epochs,)),
+                    "critic/total_loss": jnp.zeros((self.num_epochs,)),
+                    "critic/log_prob": jnp.zeros((self.num_epochs,)),
+                    "critic/qs": jnp.zeros((self.num_epochs,)),
+                    "critic/q_target": jnp.zeros((self.num_epochs,)),
+                    "critic/q_diff": jnp.zeros((self.num_epochs,)),
+                    "critic/explained_variance": jnp.zeros((self.num_epochs,)),
+                    "critic/grad_norm": jnp.zeros((self.num_epochs,)),
+                    "critic/param_norm": jnp.zeros((self.num_epochs,)),
+                    "critic/momentum_norm": jnp.zeros((self.num_epochs,)),
+                    "critic/variance_norm": jnp.zeros((self.num_epochs,)),
+                    "alpha/total_loss": jnp.zeros((self.num_epochs,)),
+                    "alpha/value": jnp.zeros((self.num_epochs,)),
+                    "alpha/entropy_gap": jnp.zeros((self.num_epochs,)),
+                },
+            ),
+        )
 
         # Update target network
         if self.target_update_freq == 1:
@@ -174,9 +233,10 @@ class SAC(
                 self.polyak_update(ts.critic_ts.params, ts.critic_target_params),
                 ts.critic_target_params,
             )
-        ts = ts.replace(critic_target_params=target_params)
 
-        return ts
+        return ts.replace(critic_target_params=target_params), jax.tree.map(
+            lambda x: jnp.mean(x, axis=0), loss_metrics
+        )
 
     def collect_transitions(self, ts):
         rng, rng_action = jax.random.split(ts.rng)
@@ -221,33 +281,59 @@ class SAC(
             last_obs=next_obs,
             env_state=env_state,
             global_step=ts.global_step + self.num_envs,
+            episode_return=(ts.episode_return + rewards) * (1 - dones),
         )
         return ts, minibatch
 
-    def update_actor(self, ts, mb):
+    def udpate_actor(self, ts, mb):
         rng, action_rng = jax.random.split(ts.rng)
         ts = ts.replace(rng=rng)
         alpha = jnp.exp(ts.alpha_ts.params["log_alpha"])
 
         def actor_loss_fn(params):
             if self.discrete:
-                logprob = jnp.log(
-                    self.actor.apply(params, mb.obs, method="_action_dist").probs
+                log_prob = jnp.log(
+                    self.actor.apply(params, mb.obs, method="_action_dist").probs  # ty:ignore[unresolved-attribute]
                 )
+                entropy = -jnp.sum(jnp.exp(log_prob) * log_prob, axis=1)
                 qs = self.vmap_critic(ts.critic_ts.params, mb.obs)
-                loss_pi = alpha * logprob - qs.min(axis=0)
-                loss_pi = jnp.sum(jnp.exp(logprob) * loss_pi, axis=1)
+                loss_pi = alpha * log_prob - qs.min(axis=0)
+                loss_pi = jnp.sum(jnp.exp(log_prob) * loss_pi, axis=1)
             else:
-                action, logprob = self.actor.apply(
+                action, log_prob = self.actor.apply(
                     params, mb.obs, action_rng, method="action_log_prob"
                 )
+                entropy = -log_prob  # ty:ignore[unsupported-operator]
                 qs = self.vmap_critic(ts.critic_ts.params, mb.obs, action)
-                loss_pi = alpha * logprob - qs.min(axis=0)
-            return loss_pi.mean(), logprob
+                loss_pi = alpha * log_prob - qs.min(axis=0)  # ty:ignore[unsupported-operator]
+            return loss_pi.mean(), (
+                log_prob,
+                {
+                    "actor/log_prob": log_prob.mean(),  # ty:ignore[unresolved-attribute]
+                    "actor/entropy": entropy.mean(),
+                    "actor/qs": qs.mean(),
+                },
+            )
 
-        grads, logprob = jax.grad(actor_loss_fn, has_aux=True)(ts.actor_ts.params)
-        ts = ts.replace(actor_ts=ts.actor_ts.apply_gradients(grads=grads))
-        return ts, logprob
+        (
+            (loss, (log_prob, aux)),
+            grads,
+        ) = jax.value_and_grad(actor_loss_fn, has_aux=True)(ts.actor_ts.params)
+        return ts.replace(actor_ts=ts.actor_ts.apply_gradients(grads=grads)), (
+            log_prob,
+            {
+                "actor/total_loss": loss,
+                "actor/grad_norm": optax.global_norm(grads),
+                "actor/param_norm": optax.global_norm(ts.actor_ts.params),
+                "actor/momentum_norm": optax.global_norm(
+                    ts.actor_ts.opt_state[1][0].mu
+                ),
+                "actor/variance_norm": optax.global_norm(
+                    ts.actor_ts.opt_state[1][0].nu
+                ),
+                **aux,
+            },
+        )
 
     def update_critic(self, ts, mb):
         rng, action_rng = jax.random.split(ts.rng)
@@ -260,47 +346,73 @@ class SAC(
                 action_dist = self.actor.apply(
                     ts.actor_ts.params, mb.next_obs, method="_action_dist"
                 )
-                logprob = jnp.log(action_dist.probs)
+                log_prob = jnp.log(action_dist.probs)  # ty:ignore[unresolved-attribute]
                 qs = self.vmap_critic(ts.critic_target_params, mb.next_obs)
-                q_target = jnp.min(qs, axis=0) - alpha * logprob
-                q_target = jnp.sum(jnp.exp(logprob) * q_target, axis=1)
+                q_target = jnp.min(qs, axis=0) - alpha * log_prob
+                q_target = jnp.sum(jnp.exp(log_prob) * q_target, axis=1)
                 qs = jax.vmap(
                     lambda *args: self.critic.apply(*args, method="take"),
                     in_axes=(0, None, None),
                 )(params, mb.obs, mb.action)
             else:
-                action, logprob = self.actor.apply(
+                action, log_prob = self.actor.apply(
                     ts.actor_ts.params,
                     mb.next_obs,
                     action_rng,
                     method="action_log_prob",
                 )
                 qs = self.vmap_critic(ts.critic_target_params, mb.next_obs, action)
-                q_target = jnp.min(qs, axis=0) - alpha * logprob
+                q_target = jnp.min(qs, axis=0) - alpha * log_prob  # ty:ignore[unsupported-operator]
                 qs = self.vmap_critic(params, mb.obs, mb.action)
 
+            q_diff = jnp.abs(qs[0] - qs[1])
             target = mb.reward + self.gamma * (1 - mb.done) * q_target
             losses = jax.vmap(lambda q: optax.l2_loss(q, target))(qs)
-            return losses.sum(axis=0).mean()
+            return losses.sum(axis=0).mean(), {
+                "critic/log_prob": log_prob.mean(),  # ty:ignore[unresolved-attribute]
+                "critic/qs": qs.mean(),
+                "critic/q_target": q_target.mean(),
+                "critic/q_diff": q_diff.mean(),
+                "critic/explained_variance": explained_variance(qs[0], target),
+            }
 
-        grads = jax.grad(critic_loss_fn)(ts.critic_ts.params)
-        ts = ts.replace(critic_ts=ts.critic_ts.apply_gradients(grads=grads))
-        return ts
+        (loss, aux), grads = jax.value_and_grad(critic_loss_fn, has_aux=True)(
+            ts.critic_ts.params
+        )
+        return ts.replace(critic_ts=ts.critic_ts.apply_gradients(grads=grads)), {
+            "critic/total_loss": loss,
+            "critic/grad_norm": optax.global_norm(grads),
+            "critic/param_norm": optax.global_norm(ts.critic_ts.params),
+            "critic/momentum_norm": optax.global_norm(ts.critic_ts.opt_state[1][0].mu),
+            "critic/variance_norm": optax.global_norm(ts.critic_ts.opt_state[1][0].nu),
+            **aux,
+        }
 
-    def update_alpha(self, ts, logprob):
-        def alpha_loss_fn(params, logprob):
+    def update_alpha(self, ts, log_prob):
+        def alpha_loss_fn(params, log_prob):
             alpha = jnp.exp(params["log_alpha"])
-            loss_alpha = -alpha * (logprob + self.target_entropy)
+            entropy_gap = -(log_prob + self.target_entropy)
+            loss_alpha = -alpha * (log_prob + self.target_entropy)
             if self.discrete:
-                loss_alpha = jnp.sum(jnp.exp(logprob) * loss_alpha, axis=1)
-            return loss_alpha.mean()
+                loss_alpha = jnp.sum(jnp.exp(log_prob) * loss_alpha, axis=1)
+            return loss_alpha.mean(), {
+                "alpha/value": alpha,
+                "alpha/entropy_gap": entropy_gap.mean(),
+            }
 
-        grads = jax.grad(alpha_loss_fn)(ts.alpha_ts.params, logprob)
-        ts = ts.replace(alpha_ts=ts.alpha_ts.apply_gradients(grads=grads))
-        return ts
+        (loss, aux), grads = jax.value_and_grad(alpha_loss_fn, has_aux=True)(
+            ts.alpha_ts.params, log_prob
+        )
+        return ts.replace(alpha_ts=ts.alpha_ts.apply_gradients(grads=grads)), {
+            "alpha/total_loss": loss,
+            **aux,
+        }
 
     def update(self, ts, mb):
-        ts, logprob = self.update_actor(ts, mb)
-        ts = self.update_critic(ts, mb)
-        ts = self.update_alpha(ts, logprob)
-        return ts
+        ts, (log_prob, actor_loss_metrics) = self.udpate_actor(ts, mb)
+        ts, critic_loss_metrics = self.update_critic(ts, mb)
+        ts, alpha_loss_metrics = self.update_alpha(
+            ts,
+            log_prob,
+        )
+        return ts, {**actor_loss_metrics, **critic_loss_metrics, **alpha_loss_metrics}

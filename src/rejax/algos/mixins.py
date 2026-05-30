@@ -47,6 +47,7 @@ class VectorizedEnvMixin(struct.PyTreeNode):
             "last_obs": obs,
             "global_step": 0,
             "last_done": jnp.zeros(self.num_envs, dtype=bool),
+            "episode_return": jnp.zeros(self.num_envs, dtype=jnp.float32),
         }
 
 
@@ -67,19 +68,22 @@ class ReplayBufferMixin(VectorizedEnvMixin):
         ts = train_state or self.init_state(rng)
 
         if not self.skip_initial_evaluation:
-            initial_evaluation = self.eval_callback(self, ts, ts.rng)
+            _, sample_loss_metrics = self.train_iteration(ts)
+            zero_loss_metrics = jax.tree.map(jnp.zeros_like, sample_loss_metrics)
+            initial_evaluation = self.eval_callback(self, ts, ts.rng, zero_loss_metrics)
 
         def eval_iteration(ts, unused):
-            # Run a few trainig iterations
-            ts = jax.lax.fori_loop(
-                0,
-                np.ceil(self.eval_freq / self.num_envs).astype(int),
-                lambda _, ts: self.train_iteration(ts),
+            # Run a few training iterations
+            ts, metrics = jax.lax.scan(
+                lambda ts, _: self.train_iteration(ts),
                 ts,
+                None,
+                length=np.ceil(self.eval_freq / self.num_envs).astype(int),
             )
 
-            # Run evaluation
-            return ts, self.eval_callback(self, ts, ts.rng)
+            # Run evaluation, passing averaged training metrics into the callback
+            avg_loss_metrics = jax.tree.map(lambda x: jnp.mean(x, axis=0), metrics)
+            return ts, self.eval_callback(self, ts, ts.rng, avg_loss_metrics)
 
         ts, evaluation = jax.lax.scan(
             eval_iteration,
@@ -129,21 +133,25 @@ class OnPolicyMixin(VectorizedEnvMixin):
         ts = train_state or self.init_state(rng)
 
         if not self.skip_initial_evaluation:
-            initial_evaluation = self.eval_callback(self, ts, ts.rng)
+            _, sample_loss_metrics = self.train_iteration(ts)
+            zero_loss_metrics = jax.tree.map(jnp.zeros_like, sample_loss_metrics)
+            initial_evaluation = self.eval_callback(self, ts, ts.rng, zero_loss_metrics)
 
         def eval_iteration(ts, unused):
             # Run a few training iterations
             iteration_steps = self.num_envs * self.num_steps
             num_iterations = np.ceil(self.eval_freq / iteration_steps).astype(int)
-            ts = jax.lax.fori_loop(
-                0,
-                num_iterations,
-                lambda _, ts: self.train_iteration(ts),
+            ts, loss_metrics = jax.lax.scan(
+                lambda ts, _: self.train_iteration(ts),
                 ts,
+                None,
+                num_iterations,
             )
 
-            # Run evaluation
-            return ts, self.eval_callback(self, ts, ts.rng)
+            avg_loss_metrics = jax.tree.map(lambda x: jnp.mean(x, axis=0), loss_metrics)
+
+            # Run evaluation, passing averaged training metrics into the callback
+            return ts, self.eval_callback(self, ts, ts.rng, avg_loss_metrics)
 
         num_evals = np.ceil(self.total_timesteps / self.eval_freq).astype(int)
         ts, evaluation = jax.lax.scan(eval_iteration, ts, None, num_evals)

@@ -15,6 +15,7 @@ from rejax.algos.mixins import (
 )
 from rejax.buffers import Minibatch
 from rejax.networks import DiscreteQNetwork, DuelingQNetwork, EpsilonGreedyPolicy
+from rejax.statistics import explained_variance
 
 
 class DQN(
@@ -31,14 +32,14 @@ class DQN(
 
     def make_act(self, ts):
         def act(obs, rng):
-            if getattr(self, "normalize_observations", False):
+            if self.normalize_observations:
                 obs = self.normalize_obs(ts.obs_rms_state, obs)
 
             obs = jnp.expand_dims(obs, 0)
             action = self.agent.apply(
                 ts.q_ts.params, obs, rng, epsilon=0.005, method="act"
             )
-            return jnp.squeeze(action)
+            return jnp.squeeze(action)  # ty:ignore[invalid-argument-type]
 
         return act
 
@@ -51,11 +52,14 @@ class DQN(
         }[agent_name]
         agent_kwargs = config.pop("agent_kwargs", {})
         activation = agent_kwargs.pop("activation", "swish")
-        agent_kwargs["activation"] = getattr(nn, activation)
+        activation = getattr(nn, activation)
 
         action_dim = env.action_space(env_params).n
-        agent = EpsilonGreedyPolicy(agent_cls)(
-            hidden_layer_sizes=(64, 64), action_dim=action_dim, **agent_kwargs
+        agent = EpsilonGreedyPolicy(agent_cls)(  # ty:ignore[invalid-argument-type]
+            hidden_layer_sizes=(64, 64),
+            action_dim=action_dim,
+            activation=activation,
+            **agent_kwargs,
         )
 
         return {"agent": agent}
@@ -65,7 +69,7 @@ class DQN(
         obs_ph = jnp.empty([1, *self.env.observation_space(self.env_params).shape])
         q_params = self.agent.init(rng, obs_ph)
         tx = optax.chain(
-            optax.clip(self.max_grad_norm),
+            optax.clip_by_global_norm(self.max_grad_norm),
             optax.adam(learning_rate=self.learning_rate),
         )
         q_ts = TrainState.create(apply_fn=(), params=q_params, tx=tx)
@@ -84,7 +88,7 @@ class DQN(
         ts = ts.replace(replay_buffer=ts.replay_buffer.extend(batch))
 
         # Perform updates to q network
-        def update_iteration(ts):
+        def update_iteration(ts, unused):
             # Sample minibatch
             rng, rng_sample = jax.random.split(ts.rng)
             ts = ts.replace(rng=rng)
@@ -94,17 +98,37 @@ class DQN(
                     obs=self.normalize_obs(ts.obs_rms_state, minibatch.obs),
                     next_obs=self.normalize_obs(ts.obs_rms_state, minibatch.next_obs),
                 )
+            if self.normalize_rewards:
+                minibatch = minibatch._replace(
+                    reward=self.normalize_rew(ts.rew_rms_state, minibatch.reward)
+                )
 
             # Update network
-            ts = self.update(ts, minibatch)
-            return ts
+            ts, loss_metrics = self.update(ts, minibatch)
+            return ts, loss_metrics
 
         def do_updates(ts):
-            return jax.lax.fori_loop(
-                0, self.num_epochs, lambda _, ts: update_iteration(ts), ts
-            )
+            ts, loss_metrics = jax.lax.scan(update_iteration, ts, None, self.num_epochs)
+            return ts, loss_metrics
 
-        ts = jax.lax.cond(start_training, lambda: do_updates(ts), lambda: ts)
+        mock_metrics = {
+            "q/loss": jnp.zeros((self.num_epochs,)),
+            "q/q_values": jnp.zeros((self.num_epochs,)),
+            "q/q_targets": jnp.zeros((self.num_epochs,)),
+            "q/total_loss": jnp.zeros((self.num_epochs,)),
+            "q/explained_variance": jnp.zeros((self.num_epochs,)),
+            "q/grad_norm": jnp.zeros((self.num_epochs,)),
+            "q/param_norm": jnp.zeros((self.num_epochs,)),
+            "q/momentum_norm": jnp.zeros((self.num_epochs,)),
+            "q/variance_norm": jnp.zeros((self.num_epochs,)),
+        }
+
+        ts, loss_metrics = jax.lax.cond(
+            start_training,
+            do_updates,
+            lambda ts: (ts, mock_metrics),
+            ts,
+        )
 
         # Update target network
         if self.target_update_freq == 1:
@@ -121,7 +145,9 @@ class DQN(
             )
         ts = ts.replace(q_target_params=target_params)
 
-        return ts
+        avg_loss_metrics = jax.tree.map(lambda x: jnp.mean(x, axis=0), loss_metrics)
+
+        return ts, avg_loss_metrics
 
     def collect_transitions(self, ts, epsilon, uniform=False):
         # Sample actions
@@ -150,6 +176,8 @@ class DQN(
         next_obs, env_state, rewards, dones, _ = self.vmap_step(
             rng_steps, ts.env_state, actions, self.env_params
         )
+        new_global_step = ts.global_step + self.num_envs
+        new_episode_return = (ts.episode_return + rewards) * (1 - dones)
         if self.normalize_observations:
             ts = ts.replace(
                 obs_rms_state=self.update_obs_rms(ts.obs_rms_state, next_obs)
@@ -169,25 +197,24 @@ class DQN(
         ts = ts.replace(
             last_obs=next_obs,
             env_state=env_state,
-            global_step=ts.global_step + self.num_envs,
+            global_step=new_global_step,
+            episode_return=new_episode_return,
         )
         return ts, minibatch
 
     def update(self, ts, mb):
         next_q_target_values = self.agent.apply(ts.q_target_params, mb.next_obs)
-        if self.normalize_rewards:
-            rewards = self.normalize_rew(ts.rew_rms_state, mb.reward)
-        else:
-            rewards = mb.reward
 
         def vanilla_targets(q_params):
-            return jnp.max(next_q_target_values, axis=1)
+            return jnp.max(next_q_target_values, axis=1)  # ty:ignore[invalid-argument-type]
 
         def ddqn_targets(q_params):
             next_q_values = self.agent.apply(q_params, mb.next_obs)
-            next_action = jnp.argmax(next_q_values, axis=1, keepdims=True)
+            next_action = jnp.argmax(next_q_values, axis=1, keepdims=True)  # ty:ignore[invalid-argument-type]
             next_q_values_target = jnp.take_along_axis(
-                next_q_target_values, next_action, axis=1
+                next_q_target_values,  # ty:ignore[invalid-argument-type]
+                next_action,
+                axis=1,
             ).squeeze(axis=1)
             return next_q_values_target
 
@@ -197,10 +224,27 @@ class DQN(
                 self.ddqn, ddqn_targets, vanilla_targets, q_params
             )
             mask_done = jnp.logical_not(mb.done)
-            targets = rewards + mask_done * self.gamma * next_q_values_target
-            loss = optax.l2_loss(q_values, targets).mean()
-            return loss
+            targets = mb.reward + mask_done * self.gamma * next_q_values_target
+            loss = optax.l2_loss(q_values, targets).mean()  # ty:ignore[invalid-argument-type]
+            return loss, (
+                (targets, q_values),
+                {
+                    "q/loss": loss,
+                    "q/q_values": q_values.mean(),  # ty:ignore[unresolved-attribute]
+                    "q/q_targets": targets.mean(),
+                },
+            )
 
-        grads = jax.grad(loss_fn)(ts.q_ts.params)
+        (loss, ((targets, q_values), aux)), grads = jax.value_and_grad(
+            loss_fn, has_aux=True
+        )(ts.q_ts.params)
         ts = ts.replace(q_ts=ts.q_ts.apply_gradients(grads=grads))
-        return ts
+        return ts, {
+            "q/total_loss": loss,
+            "q/explained_variance": explained_variance(targets, q_values),
+            "q/grad_norm": optax.global_norm(grads),
+            "q/param_norm": optax.global_norm(ts.q_ts.params),
+            "q/momentum_norm": optax.global_norm(ts.q_ts.opt_state[1][0].mu),
+            "q/variance_norm": optax.global_norm(ts.q_ts.opt_state[1][0].nu),
+            **aux,
+        }

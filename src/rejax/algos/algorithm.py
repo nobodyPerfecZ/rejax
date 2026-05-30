@@ -1,5 +1,4 @@
 from collections.abc import Callable
-from copy import deepcopy
 from dataclasses import asdict
 from typing import Any
 
@@ -33,18 +32,18 @@ class Algorithm(struct.PyTreeNode):
     total_timesteps: int = struct.field(pytree_node=False, default=131_072)
     learning_rate: chex.Scalar = struct.field(pytree_node=True, default=0.0003)
     gamma: chex.Scalar = struct.field(pytree_node=True, default=0.99)
-    max_grad_norm: chex.Scalar = struct.field(pytree_node=True, default=jnp.inf)
+    max_grad_norm: chex.Scalar = struct.field(pytree_node=True, default=1.0)
 
     @classmethod
     def create(cls, **config):
-        config = deepcopy(config)
         env, env_params = cls.create_env(config)
         agent = cls.create_agent(config, env, env_params)
 
         def eval_callback(algo, ts, rng):
             act = algo.make_act(ts)
+            critic = algo.make_critic(ts)
             max_steps = algo.env_params.max_steps_in_episode
-            return evaluate(act, rng, env, env_params, 128, max_steps)
+            return evaluate(act, critic, rng, env, env_params, 128, max_steps)
 
         return cls(
             env=env,

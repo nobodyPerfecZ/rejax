@@ -56,7 +56,7 @@ class DiscretePolicy(nn.Module):
         return action, action_dist.log_prob(action)
 
 
-def EpsilonGreedyPolicy(qnet: nn.Module) -> type[nn.Module]:  # noqa:  N802
+def EpsilonGreedyPolicy(qnet: nn.Module) -> type[nn.Module]:
     class EpsilonGreedyPolicy(qnet):
         def _action_dist(self, obs, epsilon):
             q = self(obs)
@@ -131,10 +131,6 @@ class SquashedGaussianPolicy(nn.Module):
         return (self.action_range[1] - self.action_range[0]) / 2
 
     def _action_dist(self, obs):
-        # We have to transform the action manually, since we need to calculate log_probs
-        # *before* the tanh transform. Doing it afterwards runs into numerical issues
-        # because we cannot invert the tanh for +-1, which can easily be sampled.
-        # (e.g. jnp.tanh(8) = 1)
         features = self.features(obs)
         action_mean = self.action_mean(features)
         action_log_std = self.action_log_std(features)
@@ -158,10 +154,7 @@ class SquashedGaussianPolicy(nn.Module):
     def action_log_prob(self, obs, rng):
         return self(obs, rng)
 
-    def log_prob(self, obs, action, epsilon=1e-6):
-        low, high = self.action_range
-        action = jnp.clip(action, low + epsilon, high - epsilon)
-
+    def log_prob(self, obs, action):
         action_dist = self._action_dist(obs)
         action = (action - self.action_loc) / self.action_scale
         action, log_det_j = self.bij.inverse_and_log_det(action)
@@ -251,13 +244,27 @@ class DeterministicPolicy(nn.Module):
 
 
 # Value networks
-
-
 class VNetwork(MLP):
     @nn.compact
     def __call__(self, obs):
         x = super().__call__(obs)
         return nn.Dense(1)(x).squeeze(1)
+
+
+class VHigherOrderNetwork(MLP):
+    @nn.compact
+    def __call__(self, obs):
+        x = super().__call__(obs)
+        return nn.Dense(2)(x)
+
+
+class VQuantileNetwork(MLP):
+    num_quantiles: int = 200
+
+    @nn.compact
+    def __call__(self, obs):
+        x = super().__call__(obs)
+        return nn.Dense(self.num_quantiles)(x)
 
 
 class QNetwork(MLP):
@@ -266,6 +273,16 @@ class QNetwork(MLP):
         x = jnp.concatenate([obs.reshape(obs.shape[0], -1), action], axis=-1)
         x = super().__call__(x)
         return nn.Dense(1)(x).squeeze(1)
+
+
+class QQuantileNetwork(MLP):
+    num_quantiles: int = 200
+
+    @nn.compact
+    def __call__(self, obs, action):
+        x = jnp.concatenate([obs.reshape(obs.shape[0], -1), action], axis=-1)
+        x = super().__call__(x)
+        return nn.Dense(self.num_quantiles)(x)
 
 
 class DiscreteQNetwork(MLP):
@@ -279,6 +296,22 @@ class DiscreteQNetwork(MLP):
     def take(self, obs, action):
         q_values = self(obs)
         return jnp.take_along_axis(q_values, action[:, None], axis=1).squeeze(1)
+
+
+class DiscreteQQuantileNetwork(MLP):
+    action_dim: int
+    num_quantiles: int = 200
+
+    @nn.compact
+    def __call__(self, obs):
+        x = super().__call__(obs)
+        return nn.Dense(self.action_dim * self.num_quantiles)(x).reshape(
+            -1, self.action_dim, self.num_quantiles
+        )
+
+    def take(self, obs, action):
+        q_values = self(obs)
+        return jnp.take_along_axis(q_values, action[:, None, None], axis=1).squeeze(1)
 
 
 class DuelingQNetwork(nn.Module):

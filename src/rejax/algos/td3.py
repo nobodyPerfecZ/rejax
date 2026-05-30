@@ -16,6 +16,7 @@ from rejax.algos.mixins import (
 )
 from rejax.buffers import Minibatch
 from rejax.networks import DeterministicPolicy, QNetwork
+from rejax.statistics import explained_variance
 
 
 # Algorithm outline
@@ -53,7 +54,7 @@ class TD3(
 
             obs = jnp.expand_dims(obs, 0)
             action = self.actor.apply(ts.actor_ts.params, obs)
-            return jnp.squeeze(action)
+            return jnp.squeeze(action)  # ty:ignore[invalid-argument-type]
 
         return act
 
@@ -61,20 +62,28 @@ class TD3(
     def create_agent(cls, config, env, env_params):
         actor_kwargs = config.pop("actor_kwargs", {})
         activation = actor_kwargs.pop("activation", "swish")
-        actor_kwargs["activation"] = getattr(nn, activation)
+        activation = getattr(nn, activation)
         action_range = (
             env.action_space(env_params).low,
             env.action_space(env_params).high,
         )
         action_dim = np.prod(env.action_space(env_params).shape)
         actor = DeterministicPolicy(
-            action_dim, action_range, hidden_layer_sizes=(64, 64), **actor_kwargs
+            action_dim=action_dim,
+            action_range=action_range,
+            hidden_layer_sizes=(64, 64),  # ty:ignore[invalid-argument-type]
+            activation=activation,
+            **actor_kwargs,
         )
 
         critic_kwargs = config.pop("critic_kwargs", {})
         activation = critic_kwargs.pop("activation", "swish")
-        critic_kwargs["activation"] = getattr(nn, activation)
-        critic = QNetwork(hidden_layer_sizes=(64, 64), **critic_kwargs)
+        activation = getattr(nn, activation)
+        critic = QNetwork(
+            hidden_layer_sizes=(64, 64),
+            activation=activation,
+            **critic_kwargs,
+        )
 
         return {"actor": actor, "critic": critic}
 
@@ -86,7 +95,7 @@ class TD3(
         action_ph = jnp.empty((1, *self.env.action_space(self.env_params).shape))
 
         tx = optax.chain(
-            optax.clip(self.max_grad_norm),
+            optax.clip_by_global_norm(self.max_grad_norm),
             optax.adam(learning_rate=self.learning_rate),
         )
 
@@ -111,24 +120,29 @@ class TD3(
         if train_state is None and rng is None:
             raise ValueError("Either train_state or rng must be provided")
 
-        ts = train_state or self.init_state(rng)
+        ts = train_state or self.init_state(rng)  # ty:ignore[invalid-argument-type]
 
         if not self.skip_initial_evaluation:
-            initial_evaluation = self.eval_callback(self, ts, ts.rng)
+            _, sample_loss_metrics = self.train_iteration(ts)
+            zero_loss_metrics = jax.tree.map(jnp.zeros_like, sample_loss_metrics)
+            initial_evaluation = self.eval_callback(self, ts, ts.rng, zero_loss_metrics)
 
         def eval_iteration(ts, unused):
             # Run a few trainig iterations
             steps_per_train_it = self.num_envs * self.policy_delay
             num_train_its = np.ceil(self.eval_freq / steps_per_train_it).astype(int)
-            ts = jax.lax.fori_loop(
-                0,
-                num_train_its,
-                lambda _, ts: self.train_iteration(ts),
+            ts, loss_metrics = jax.lax.scan(
+                lambda ts, _: self.train_iteration(ts),
                 ts,
+                None,
+                length=num_train_its,
             )
 
+            # Average loss metrics over the training iterations
+            avg_loss_metrics = jax.tree.map(lambda x: jnp.mean(x, axis=0), loss_metrics)
+
             # Run evaluation
-            return ts, self.eval_callback(self, ts, ts.rng)
+            return ts, self.eval_callback(self, ts, ts.rng, avg_loss_metrics)
 
         ts, evaluation = jax.lax.scan(
             eval_iteration,
@@ -152,14 +166,28 @@ class TD3(
             lambda sdstr: jnp.empty((self.num_epochs, *sdstr.shape), sdstr.dtype),
             ts.replay_buffer.sample(self.batch_size, jax.random.PRNGKey(0)),
         )
-        ts, minibatch = jax.lax.fori_loop(
-            0,
-            self.policy_delay,
-            lambda _, ts_mb: self.train_critic(ts_mb[0]),
+
+        def critic_step(carry, _):
+            ts, _ = carry
+            ts, minibatch, critic_metrics = self.train_critic(ts)
+            return (ts, minibatch), critic_metrics
+
+        (ts, last_minibatch), critic_metrics = jax.lax.scan(
+            critic_step,
             (ts, placeholder_minibatch),
+            None,
+            length=self.policy_delay,
         )
-        ts = self.train_policy(ts, minibatch, old_global_step)
-        return ts
+
+        ts, actor_metrics = self.train_policy(ts, last_minibatch, old_global_step)
+
+        # Average over policy_delay and num_epochs
+        critic_metrics = jax.tree.map(
+            lambda x: jnp.mean(x, axis=(0, 1)), critic_metrics
+        )
+        actor_metrics = jax.tree.map(lambda x: jnp.mean(x, axis=0), actor_metrics)
+
+        return ts, {**critic_metrics, **actor_metrics}
 
     def train_critic(self, ts):
         start_training = ts.global_step > self.fill_buffer
@@ -185,35 +213,68 @@ class TD3(
                 )
 
             # Update network
-            ts = self.update_critic(ts, minibatch)
-            return ts, minibatch
+            ts, critic_metrics = self.update_critic(ts, minibatch)
+            return ts, (minibatch, critic_metrics)
 
         def do_updates(ts):
-            return jax.lax.scan(update_iteration, ts, None, self.num_epochs)
+            ts, (minibatches, critic_metrics) = jax.lax.scan(
+                update_iteration, ts, None, self.num_epochs
+            )
+            return ts, (minibatches, critic_metrics)
 
         placeholder_minibatch = jax.tree.map(
             lambda sdstr: jnp.empty((self.num_epochs, *sdstr.shape), sdstr.dtype),
             ts.replay_buffer.sample(self.batch_size, jax.random.PRNGKey(0)),
         )
-        ts, minibatches = jax.lax.cond(
+        mock_critic_metrics = {
+            "critic/total_loss": jnp.zeros((self.num_epochs,)),
+            "critic/explained_variance": jnp.zeros((self.num_epochs,)),
+            "critic/grad_norm": jnp.zeros((self.num_epochs,)),
+            "critic/param_norm": jnp.zeros((self.num_epochs,)),
+            "critic/momentum_norm": jnp.zeros((self.num_epochs,)),
+            "critic/variance_norm": jnp.zeros((self.num_epochs,)),
+            "critic/q1": jnp.zeros((self.num_epochs,)),
+            "critic/q2": jnp.zeros((self.num_epochs,)),
+            "critic/q_target": jnp.zeros((self.num_epochs,)),
+            "critic/loss_q1": jnp.zeros((self.num_epochs,)),
+            "critic/loss_q2": jnp.zeros((self.num_epochs,)),
+        }
+        ts, (minibatches, critic_metrics) = jax.lax.cond(
             start_training,
             do_updates,
-            lambda ts: (ts, placeholder_minibatch),
+            lambda ts: (ts, (placeholder_minibatch, mock_critic_metrics)),
             ts,
         )
-        return ts, minibatches
+        return ts, minibatches, critic_metrics
 
     def train_policy(self, ts, minibatches, old_global_step):
         def do_updates(ts):
-            ts, _ = jax.lax.scan(
-                lambda ts, minibatch: (self.update_actor(ts, minibatch), None),
+            def update_actor_step(ts, minibatch):
+                ts, actor_metrics = self.update_actor(ts, minibatch)
+                return ts, actor_metrics
+
+            ts, actor_metrics = jax.lax.scan(
+                update_actor_step,
                 ts,
                 minibatches,
             )
-            return ts
+            return ts, actor_metrics
 
         start_training = ts.global_step > self.fill_buffer
-        ts = jax.lax.cond(start_training, do_updates, lambda ts: ts, ts)
+        mock_actor_metrics = {
+            "actor/total_loss": jnp.zeros((self.num_epochs,)),
+            "actor/q": jnp.zeros((self.num_epochs,)),
+            "actor/grad_norm": jnp.zeros((self.num_epochs,)),
+            "actor/param_norm": jnp.zeros((self.num_epochs,)),
+            "actor/momentum_norm": jnp.zeros((self.num_epochs,)),
+            "actor/variance_norm": jnp.zeros((self.num_epochs,)),
+        }
+        ts, actor_metrics = jax.lax.cond(
+            start_training,
+            do_updates,
+            lambda ts: (ts, mock_actor_metrics),
+            ts,
+        )
 
         # Update target networks
         if self.target_update_freq == 1:
@@ -236,7 +297,7 @@ class TD3(
             )
 
         ts = ts.replace(critic_target_params=critic_tp, actor_target_params=actor_tp)
-        return ts
+        return ts, actor_metrics
 
     def collect_transitions(self, ts, uniform=False):
         # Sample actions
@@ -254,9 +315,9 @@ class TD3(
                 last_obs = ts.last_obs
 
             actions = self.actor.apply(ts.actor_ts.params, last_obs)
-            noise = self.exploration_noise * jax.random.normal(rng, actions.shape)
+            noise = self.exploration_noise * jax.random.normal(rng, actions.shape)  # ty:ignore[unresolved-attribute]
             action_low, action_high = self.action_space.low, self.action_space.high
-            return jnp.clip(actions + noise, action_low, action_high)
+            return jnp.clip(actions + noise, action_low, action_high)  # ty:ignore[unsupported-operator]
 
         actions = jax.lax.cond(uniform, sample_uniform, sample_policy, rng_action)
 
@@ -267,6 +328,8 @@ class TD3(
         next_obs, env_state, rewards, dones, _ = self.vmap_step(
             rng_steps, ts.env_state, actions, self.env_params
         )
+        new_global_step = ts.global_step + self.num_envs
+        new_episode_return = (ts.episode_return + rewards) * (1 - dones)
 
         if self.normalize_observations:
             ts = ts.replace(
@@ -288,7 +351,8 @@ class TD3(
         ts = ts.replace(
             last_obs=next_obs,
             env_state=env_state,
-            global_step=ts.global_step + self.num_envs,
+            global_step=new_global_step,
+            episode_return=new_episode_return,
         )
         return ts, minibatch
 
@@ -296,12 +360,12 @@ class TD3(
         def critic_loss_fn(params):
             action = self.actor.apply(ts.actor_target_params, minibatch.next_obs)
             noise = jnp.clip(
-                self.target_noise * jax.random.normal(ts.rng, action.shape),
+                self.target_noise * jax.random.normal(ts.rng, action.shape),  # ty:ignore[unresolved-attribute]
                 -self.target_noise_clip,
                 self.target_noise_clip,
             )
             action_low, action_high = self.action_space.low, self.action_space.high
-            action = jnp.clip(action + noise, action_low, action_high)
+            action = jnp.clip(action + noise, action_low, action_high)  # ty:ignore[unsupported-operator]
 
             qs_target = self.vmap_critic(
                 ts.critic_target_params, minibatch.next_obs, action
@@ -312,18 +376,48 @@ class TD3(
 
             loss_q1 = optax.l2_loss(q1, target).mean()
             loss_q2 = optax.l2_loss(q2, target).mean()
-            return loss_q1 + loss_q2
+            return loss_q1 + loss_q2, (
+                (target, q1),
+                {
+                    "critic/q1": q1.mean(),
+                    "critic/q2": q2.mean(),
+                    "critic/q_target": target.mean(),
+                    "critic/loss_q1": loss_q1,
+                    "critic/loss_q2": loss_q2,
+                },
+            )
 
-        grads = jax.grad(critic_loss_fn)(ts.critic_ts.params)
+        (loss, ((target, value), aux)), grads = jax.value_and_grad(
+            critic_loss_fn, has_aux=True
+        )(ts.critic_ts.params)
         ts = ts.replace(critic_ts=ts.critic_ts.apply_gradients(grads=grads))
-        return ts
+        return ts, {
+            "critic/total_loss": loss,
+            "critic/explained_variance": explained_variance(target, value),
+            "critic/grad_norm": optax.global_norm(grads),
+            "critic/param_norm": optax.global_norm(ts.critic_ts.params),
+            "critic/momentum_norm": optax.global_norm(ts.critic_ts.opt_state[1][0].mu),
+            "critic/variance_norm": optax.global_norm(ts.critic_ts.opt_state[1][0].nu),
+            **aux,
+        }
 
     def update_actor(self, ts, minibatch):
         def actor_loss_fn(params):
             action = self.actor.apply(params, minibatch.obs)
             q = self.vmap_critic(ts.critic_ts.params, minibatch.obs, action)
-            return -q.mean()
+            return -q.mean(), {
+                "actor/q": q.mean(),
+            }
 
-        grads = jax.grad(actor_loss_fn)(ts.actor_ts.params)
+        (loss, aux), grads = jax.value_and_grad(actor_loss_fn, has_aux=True)(
+            ts.actor_ts.params
+        )
         ts = ts.replace(actor_ts=ts.actor_ts.apply_gradients(grads=grads))
-        return ts
+        return ts, {
+            "actor/total_loss": loss,
+            "actor/grad_norm": optax.global_norm(grads),
+            "actor/param_norm": optax.global_norm(ts.actor_ts.params),
+            "actor/momentum_norm": optax.global_norm(ts.actor_ts.opt_state[1][0].mu),
+            "actor/variance_norm": optax.global_norm(ts.actor_ts.opt_state[1][0].nu),
+            **aux,
+        }

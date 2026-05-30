@@ -15,6 +15,7 @@ from rejax.algos.mixins import (
     OnPolicyMixin,
 )
 from rejax.networks import DiscretePolicy, GaussianPolicy, VNetwork
+from rejax.statistics import explained_variance
 
 
 class Trajectory(struct.PyTreeNode):
@@ -43,37 +44,54 @@ class PPO(OnPolicyMixin, NormalizeObservationsMixin, NormalizeRewardsMixin, Algo
 
     def make_act(self, ts):
         def act(obs, rng):
-            if getattr(self, "normalize_observations", False):
+            if self.normalize_observations:
                 obs = self.normalize_obs(ts.obs_rms_state, obs)
 
             obs = jnp.expand_dims(obs, 0)
             action = self.actor.apply(ts.actor_ts.params, obs, rng, method="act")
-            return jnp.squeeze(action)
+            return jnp.squeeze(action)  # ty:ignore[invalid-argument-type]
 
         return act
+
+    def make_critic(self, ts):
+        def critic(obs, action):
+            if self.normalize_observations:
+                obs = self.normalize_obs(ts.obs_rms_state, obs)
+
+            obs = jnp.expand_dims(obs, 0)
+            action = jnp.expand_dims(action, 0)
+            critic = self.critic.apply(ts.critic_ts.params, obs)
+            return jnp.squeeze(critic)  # ty:ignore[invalid-argument-type]
+
+        return critic
 
     @classmethod
     def create_agent(cls, config, env, env_params):
         action_space = env.action_space(env_params)
-        discrete = isinstance(action_space, gymnax.environments.spaces.Discrete)
+        discrete = isinstance(action_space, gymnax.environments.spaces.Discrete)  # ty:ignore[possibly-missing-attribute, possibly-missing-submodule]
 
         agent_kwargs = config.pop("agent_kwargs", {})
         activation = agent_kwargs.pop("activation", "swish")
-        agent_kwargs["activation"] = getattr(nn, activation)
+        activation = getattr(nn, activation)
 
         hidden_layer_sizes = agent_kwargs.pop("hidden_layer_sizes", (64, 64))
         agent_kwargs["hidden_layer_sizes"] = tuple(hidden_layer_sizes)
 
         if discrete:
-            actor = DiscretePolicy(action_space.n, **agent_kwargs)
+            actor = DiscretePolicy(
+                action_dim=action_space.n,
+                activation=activation,
+                **agent_kwargs,
+            )
         else:
             actor = GaussianPolicy(
-                np.prod(action_space.shape),
-                (action_space.low, action_space.high),
+                action_dim=np.prod(action_space.shape),
+                action_range=(action_space.low, action_space.high),
+                activation=activation,
                 **agent_kwargs,
             )
 
-        critic = VNetwork(**agent_kwargs)
+        critic = VNetwork(activation=activation, **agent_kwargs)
         return {"actor": actor, "critic": critic}
 
     @register_init
@@ -85,7 +103,7 @@ class PPO(OnPolicyMixin, NormalizeObservationsMixin, NormalizeRewardsMixin, Algo
         critic_params = self.critic.init(rng_critic, obs_ph)
 
         tx = optax.chain(
-            optax.clip(self.max_grad_norm),
+            optax.clip_by_global_norm(self.max_grad_norm),
             optax.adam(learning_rate=self.learning_rate),
         )
         actor_ts = TrainState.create(apply_fn=(), params=actor_params, tx=tx)
@@ -96,7 +114,7 @@ class PPO(OnPolicyMixin, NormalizeObservationsMixin, NormalizeRewardsMixin, Algo
         ts, trajectories = self.collect_trajectories(ts)
 
         last_val = self.critic.apply(ts.critic_ts.params, ts.last_obs)
-        last_val = jnp.where(ts.last_done, 0, last_val)
+        last_val = jnp.where(ts.last_done, 0, last_val)  # ty:ignore[no-matching-overload]
         advantages, targets = self.calculate_gae(trajectories, last_val)
 
         def update_epoch(ts, unused):
@@ -104,15 +122,15 @@ class PPO(OnPolicyMixin, NormalizeObservationsMixin, NormalizeRewardsMixin, Algo
             ts = ts.replace(rng=rng)
             batch = AdvantageMinibatch(trajectories, advantages, targets)
             minibatches = self.shuffle_and_split(batch, minibatch_rng)
-            ts, _ = jax.lax.scan(
-                lambda ts, mbs: (self.update(ts, mbs), None),
+            ts, loss_metrics = jax.lax.scan(
+                lambda ts, mbs: self.update(ts, mbs),
                 ts,
                 minibatches,
             )
-            return ts, None
+            return ts, jax.tree.map(lambda x: jnp.mean(x, axis=0), loss_metrics)
 
-        ts, _ = jax.lax.scan(update_epoch, ts, None, self.num_epochs)
-        return ts
+        ts, loss_metrics = jax.lax.scan(update_epoch, ts, None, self.num_epochs)
+        return ts, jax.tree.map(lambda x: jnp.mean(x, axis=0), loss_metrics)
 
     def collect_trajectories(self, ts):
         def env_step(ts, unused):
@@ -153,13 +171,19 @@ class PPO(OnPolicyMixin, NormalizeObservationsMixin, NormalizeRewardsMixin, Algo
 
             # Return updated runner state and transition
             transition = Trajectory(
-                ts.last_obs, unclipped_action, log_prob, reward, value, done
+                ts.last_obs,
+                unclipped_action,
+                log_prob,  # ty:ignore[invalid-argument-type]
+                reward,
+                value,  # ty:ignore[invalid-argument-type]
+                done,
             )
             ts = ts.replace(
                 env_state=env_state,
                 last_obs=next_obs,
                 last_done=done,
                 global_step=ts.global_step + self.num_envs,
+                episode_return=(ts.episode_return + reward) * (1 - done),
             )
             return ts, transition
 
@@ -167,8 +191,8 @@ class PPO(OnPolicyMixin, NormalizeObservationsMixin, NormalizeRewardsMixin, Algo
         return ts, trajectories
 
     def calculate_gae(self, trajectories, last_val):
-        def get_advantages(advantage_and_next_value, transition):
-            advantage, next_value = advantage_and_next_value
+        def get_advantages(runner_state, transition):
+            advantage, next_value = runner_state
             delta = (
                 transition.reward.squeeze()  # For gymnax envs that return shape (1, )
                 + self.gamma * next_value * (1 - transition.done)
@@ -195,21 +219,40 @@ class PPO(OnPolicyMixin, NormalizeObservationsMixin, NormalizeRewardsMixin, Algo
                 batch.trajectories.action,
                 method="log_prob_entropy",
             )
-            entropy = entropy.mean()
 
             # Calculate actor loss
+            approx_kl = batch.trajectories.log_prob - log_prob
             ratio = jnp.exp(log_prob - batch.trajectories.log_prob)
             advantages = (batch.advantages - batch.advantages.mean()) / (
                 batch.advantages.std() + 1e-8
             )
             clipped_ratio = jnp.clip(ratio, 1 - self.clip_eps, 1 + self.clip_eps)
+            clip_fraction = jnp.abs(ratio - 1.0) > self.clip_eps
             pi_loss1 = ratio * advantages
             pi_loss2 = clipped_ratio * advantages
-            pi_loss = -jnp.minimum(pi_loss1, pi_loss2).mean()
-            return pi_loss - self.ent_coef * entropy
+            pi_loss = -jnp.minimum(pi_loss1, pi_loss2)
+            return pi_loss.mean() - self.ent_coef * entropy.mean(), {  # ty:ignore[unresolved-attribute]
+                "actor/entropy": entropy.mean(),  # ty:ignore[unresolved-attribute]
+                "actor/approx_kl": approx_kl.mean(),
+                "actor/log_prob": log_prob.mean(),
+                "actor/ratio": ratio.mean(),
+                "actor/clip_ratio": clipped_ratio.mean(),
+                "actor/clip_fraction": clip_fraction.mean(),
+                "actor/advantages": advantages.mean(),
+                "actor/policy_loss": pi_loss.mean(),
+            }
 
-        grads = jax.grad(actor_loss_fn)(ts.actor_ts.params)
-        return ts.replace(actor_ts=ts.actor_ts.apply_gradients(grads=grads))
+        (loss, aux), grads = jax.value_and_grad(actor_loss_fn, has_aux=True)(
+            ts.actor_ts.params
+        )
+        return ts.replace(actor_ts=ts.actor_ts.apply_gradients(grads=grads)), {
+            "actor/total_loss": loss,
+            "actor/grad_norm": optax.global_norm(grads),
+            "actor/param_norm": optax.global_norm(ts.actor_ts.params),
+            "actor/momentum_norm": optax.global_norm(ts.actor_ts.opt_state[1][0].mu),
+            "actor/variance_norm": optax.global_norm(ts.actor_ts.opt_state[1][0].nu),
+            **aux,
+        }
 
     def update_critic(self, ts, batch):
         def critic_loss_fn(params):
@@ -219,13 +262,34 @@ class PPO(OnPolicyMixin, NormalizeObservationsMixin, NormalizeRewardsMixin, Algo
             ).clip(-self.clip_eps, self.clip_eps)
             value_losses = jnp.square(value - batch.targets)
             value_losses_clipped = jnp.square(value_pred_clipped - batch.targets)
-            value_loss = 0.5 * jnp.maximum(value_losses, value_losses_clipped).mean()
-            return self.vf_coef * value_loss
+            value_loss = 0.5 * jnp.maximum(value_losses, value_losses_clipped)
+            return self.vf_coef * value_loss.mean(), (
+                value,
+                {
+                    "critic/value": value.mean(),  # ty:ignore[unresolved-attribute]
+                    "critic/value_clipped": value_pred_clipped.mean(),
+                    "critic/value_loss": value_loss.mean(),
+                },
+            )
 
-        grads = jax.grad(critic_loss_fn)(ts.critic_ts.params)
-        return ts.replace(critic_ts=ts.critic_ts.apply_gradients(grads=grads))
+        (loss, (value, aux)), grads = jax.value_and_grad(critic_loss_fn, has_aux=True)(
+            ts.critic_ts.params
+        )
+
+        return ts.replace(critic_ts=ts.critic_ts.apply_gradients(grads=grads)), {
+            "critic/total_loss": loss,
+            "critic/explained_variance": explained_variance(batch.targets, value),
+            "critic/grad_norm": optax.global_norm(grads),
+            "critic/param_norm": optax.global_norm(ts.critic_ts.params),
+            "critic/momentum_norm": optax.global_norm(ts.critic_ts.opt_state[1][0].mu),
+            "critic/variance_norm": optax.global_norm(ts.critic_ts.opt_state[1][0].nu),
+            **aux,
+        }
 
     def update(self, ts, batch):
-        ts = self.update_actor(ts, batch)
-        ts = self.update_critic(ts, batch)
-        return ts
+        ts, actor_loss_metrics = self.update_actor(ts, batch)
+        ts, critic_loss_metrics = self.update_critic(ts, batch)
+        return ts, {
+            **actor_loss_metrics,
+            **critic_loss_metrics,
+        }
