@@ -4,7 +4,6 @@ from typing import Any, NamedTuple
 
 import chex
 import jax
-import jax.numpy as jnp
 from gymnax.environments import environment
 
 
@@ -24,7 +23,12 @@ def evaluate_single(
     rng,
     max_steps_in_episode,
 ):
-    def step(state):
+    def no_step(state, _):
+        """Performs no environment step."""
+        return state, state.env_state
+
+    def step(state, _):
+        """Performs one environment step."""
         rng, rng_act, rng_step = jax.random.split(state.rng, 3)
         action = act(state.last_obs, rng_act)
         obs, env_state, reward, done, _ = env.step(
@@ -38,19 +42,19 @@ def evaluate_single(
             return_=state.return_ + reward.squeeze(),
             length=state.length + 1,
         )
-        return state
+        return state, state.env_state
 
     rng_reset, rng_eval = jax.random.split(rng)
     obs, env_state = env.reset(rng_reset, env_params)
     state = EvalState(rng_eval, env_state, obs)
-    state = jax.lax.while_loop(
-        lambda s: jnp.logical_and(
-            s.length < max_steps_in_episode, jnp.logical_not(s.done)
-        ),
-        step,
+    state, trajectory = jax.lax.scan(
+        # Decides to perform an environment step if done is False
+        lambda s, _: jax.lax.cond(s.done, no_step, step, s, _),
         state,
+        None,
+        length=max_steps_in_episode,
     )
-    return state.length, state.return_
+    return state.length, state.return_, trajectory
 
 
 @partial(jax.jit, static_argnames=("act", "env", "num_seeds"))
