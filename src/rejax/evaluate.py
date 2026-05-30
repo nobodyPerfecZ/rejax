@@ -65,7 +65,7 @@ def evaluate(
     env_params: Any,
     num_seeds: int = 128,
     max_steps_in_episode: int | None = None,
-) -> tuple[chex.Array, chex.Array]:
+) -> tuple[chex.Array, chex.Array, chex.Array]:
     """Evaluate a policy given by `act` on `num_seeds` environments.
 
     Args:
@@ -78,8 +78,8 @@ def evaluate(
         num_seeds (int): Number of initializations of the environment.
 
     Returns:
-        Tuple[chex.Array, chex.Array]: Tuple of episode length and cumultative reward
-        for each seed.
+        Tuple[chex.Array, chex.Array, chex.Array]: Tuple of episode length, cumultative
+        reward and trajectory for each seed.
     """
     if max_steps_in_episode is None:
         max_steps_in_episode = env_params.max_steps_in_episode
