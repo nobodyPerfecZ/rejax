@@ -57,7 +57,7 @@ def evaluate_single(
     return state.length, state.return_, trajectory
 
 
-@partial(jax.jit, static_argnames=("act", "env", "num_seeds"))
+@partial(jax.jit, static_argnames=("act", "env", "num_seeds", "max_steps_in_episode"))
 def evaluate(
     act: Callable[[chex.Array, chex.PRNGKey], chex.Array],
     rng: chex.PRNGKey,
