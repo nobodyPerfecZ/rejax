@@ -58,6 +58,18 @@ class TD3(
 
         return act
 
+    def make_critic(self, ts):
+        def critic(obs, action):
+            if self.normalize_observations:
+                obs = self.normalize_obs(ts.obs_rms_state, obs)
+
+            obs = jnp.expand_dims(obs, 0)
+            action = jnp.expand_dims(action, 0)
+            qs = self.vmap_critic(ts.critic_ts.params, obs, action)
+            return jnp.squeeze(qs.min(axis=0))
+
+        return critic
+
     @classmethod
     def create_agent(cls, config, env, env_params):
         actor_kwargs = config.pop("actor_kwargs", {})
@@ -317,7 +329,7 @@ class TD3(
             actions = self.actor.apply(ts.actor_ts.params, last_obs)
             noise = self.exploration_noise * jax.random.normal(rng, actions.shape)  # ty:ignore[unresolved-attribute]
             action_low, action_high = self.action_space.low, self.action_space.high
-            return jnp.clip(actions + noise, action_low, action_high)  # ty:ignore[unsupported-operator]
+            return jnp.clip(actions + noise, action_low, action_high)
 
         actions = jax.lax.cond(uniform, sample_uniform, sample_policy, rng_action)
 
@@ -365,7 +377,7 @@ class TD3(
                 self.target_noise_clip,
             )
             action_low, action_high = self.action_space.low, self.action_space.high
-            action = jnp.clip(action + noise, action_low, action_high)  # ty:ignore[unsupported-operator]
+            action = jnp.clip(action + noise, action_low, action_high)
 
             qs_target = self.vmap_critic(
                 ts.critic_target_params, minibatch.next_obs, action
