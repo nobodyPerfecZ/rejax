@@ -20,7 +20,7 @@ from rejax.networks import ImplicitQuantileNetwork
 from rejax.statistics import explained_variance
 
 
-def EpsilonGreedyPolicy(iqn: nn.Module) -> type[nn.Module]:
+def create_epsilon_greedy_policy(iqn: nn.Module) -> type[nn.Module]:
     class EpsilonGreedyPolicy(iqn):  # ty:ignore[invalid-base]
         def _action_dist(self, obs, rng, epsilon):
             q = self.q(obs, rng)
@@ -71,7 +71,7 @@ class IQN(
         agent_kwargs["hidden_layer_sizes"] = tuple(hidden_layer_sizes)
 
         action_dim = env.action_space(env_params).n
-        agent = EpsilonGreedyPolicy(ImplicitQuantileNetwork)(  # ty:ignore[invalid-argument-type]
+        agent = create_epsilon_greedy_policy(ImplicitQuantileNetwork)(  # ty:ignore[invalid-argument-type]
             action_dim=action_dim,
             activation=activation,
             **agent_kwargs,
@@ -248,7 +248,7 @@ class IQN(
                 self.num_tau_samples,
                 self.num_tau_prime_samples,
             )
-            assert tau.shape == (self.batch_size, self.num_tau_samples)
+            assert tau.shape == (self.batch_size, self.num_tau_samples)  # ty:ignore[unresolved-attribute]
             assert rho(td_err, tau).shape == (
                 self.batch_size,
                 self.num_tau_samples,
@@ -270,7 +270,7 @@ class IQN(
         (loss, ((q_targets, q_values), aux)), grads = jax.value_and_grad(
             loss_fn, has_aux=True
         )(ts.q_ts.params)
-        # jax.debug.print("grads {}", jnp.abs(jnp.hstack([a.ravel() for a in jax.tree_leaves(grads)])).mean())
+
         ts = ts.replace(q_ts=ts.q_ts.apply_gradients(grads=grads))
         return ts, {
             "q/total_loss": loss,
