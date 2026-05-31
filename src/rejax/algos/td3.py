@@ -234,27 +234,13 @@ class TD3(
             )
             return ts, (minibatches, critic_metrics)
 
-        placeholder_minibatch = jax.tree.map(
-            lambda sdstr: jnp.empty((self.num_epochs, *sdstr.shape), sdstr.dtype),
-            ts.replay_buffer.sample(self.batch_size, jax.random.PRNGKey(0)),
-        )
-        mock_critic_metrics = {
-            "critic/total_loss": jnp.zeros((self.num_epochs,)),
-            "critic/explained_variance": jnp.zeros((self.num_epochs,)),
-            "critic/grad_norm": jnp.zeros((self.num_epochs,)),
-            "critic/param_norm": jnp.zeros((self.num_epochs,)),
-            "critic/momentum_norm": jnp.zeros((self.num_epochs,)),
-            "critic/variance_norm": jnp.zeros((self.num_epochs,)),
-            "critic/q1": jnp.zeros((self.num_epochs,)),
-            "critic/q2": jnp.zeros((self.num_epochs,)),
-            "critic/q_target": jnp.zeros((self.num_epochs,)),
-            "critic/loss_q1": jnp.zeros((self.num_epochs,)),
-            "critic/loss_q2": jnp.zeros((self.num_epochs,)),
-        }
+        _, mock_outputs = jax.eval_shape(do_updates, ts)
+        mock_outputs = jax.tree.map(lambda x: jnp.zeros(x.shape, x.dtype), mock_outputs)
+
         ts, (minibatches, critic_metrics) = jax.lax.cond(
             start_training,
             do_updates,
-            lambda ts: (ts, (placeholder_minibatch, mock_critic_metrics)),
+            lambda ts: (ts, mock_outputs),
             ts,
         )
         return ts, minibatches, critic_metrics
@@ -273,18 +259,13 @@ class TD3(
             return ts, actor_metrics
 
         start_training = ts.global_step > self.fill_buffer
-        mock_actor_metrics = {
-            "actor/total_loss": jnp.zeros((self.num_epochs,)),
-            "actor/q": jnp.zeros((self.num_epochs,)),
-            "actor/grad_norm": jnp.zeros((self.num_epochs,)),
-            "actor/param_norm": jnp.zeros((self.num_epochs,)),
-            "actor/momentum_norm": jnp.zeros((self.num_epochs,)),
-            "actor/variance_norm": jnp.zeros((self.num_epochs,)),
-        }
+        _, mock_outputs = jax.eval_shape(do_updates, ts)
+        mock_outputs = jax.tree.map(lambda x: jnp.zeros(x.shape, x.dtype), mock_outputs)
+
         ts, actor_metrics = jax.lax.cond(
             start_training,
             do_updates,
-            lambda ts: (ts, mock_actor_metrics),
+            lambda ts: (ts, mock_outputs),
             ts,
         )
 

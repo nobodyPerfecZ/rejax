@@ -111,17 +111,8 @@ class DQN(
             ts, loss_metrics = jax.lax.scan(update_iteration, ts, None, self.num_epochs)
             return ts, loss_metrics
 
-        mock_metrics = {
-            "q/loss": jnp.zeros((self.num_epochs,)),
-            "q/q_values": jnp.zeros((self.num_epochs,)),
-            "q/q_targets": jnp.zeros((self.num_epochs,)),
-            "q/total_loss": jnp.zeros((self.num_epochs,)),
-            "q/explained_variance": jnp.zeros((self.num_epochs,)),
-            "q/grad_norm": jnp.zeros((self.num_epochs,)),
-            "q/param_norm": jnp.zeros((self.num_epochs,)),
-            "q/momentum_norm": jnp.zeros((self.num_epochs,)),
-            "q/variance_norm": jnp.zeros((self.num_epochs,)),
-        }
+        _, mock_metrics = jax.eval_shape(do_updates, ts)
+        mock_metrics = jax.tree.map(lambda x: jnp.zeros(x.shape, x.dtype), mock_metrics)
 
         ts, loss_metrics = jax.lax.cond(
             start_training,

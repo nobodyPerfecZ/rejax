@@ -186,36 +186,13 @@ class SAC(
 
         start_training = ts.global_step > self.fill_buffer
 
-        # TODO: Improve this later on!
+        _, mock_metrics = jax.eval_shape(do_updates, ts)
+        mock_metrics = jax.tree.map(lambda x: jnp.zeros(x.shape, x.dtype), mock_metrics)
+
         ts, loss_metrics = jax.lax.cond(
             start_training,
             lambda: do_updates(ts),
-            lambda: (
-                ts,
-                {
-                    "actor/total_loss": jnp.zeros((self.num_epochs,)),
-                    "actor/log_prob": jnp.zeros((self.num_epochs,)),
-                    "actor/entropy": jnp.zeros((self.num_epochs,)),
-                    "actor/qs": jnp.zeros((self.num_epochs,)),
-                    "actor/grad_norm": jnp.zeros((self.num_epochs,)),
-                    "actor/param_norm": jnp.zeros((self.num_epochs,)),
-                    "actor/momentum_norm": jnp.zeros((self.num_epochs,)),
-                    "actor/variance_norm": jnp.zeros((self.num_epochs,)),
-                    "critic/total_loss": jnp.zeros((self.num_epochs,)),
-                    "critic/log_prob": jnp.zeros((self.num_epochs,)),
-                    "critic/qs": jnp.zeros((self.num_epochs,)),
-                    "critic/q_target": jnp.zeros((self.num_epochs,)),
-                    "critic/q_diff": jnp.zeros((self.num_epochs,)),
-                    "critic/explained_variance": jnp.zeros((self.num_epochs,)),
-                    "critic/grad_norm": jnp.zeros((self.num_epochs,)),
-                    "critic/param_norm": jnp.zeros((self.num_epochs,)),
-                    "critic/momentum_norm": jnp.zeros((self.num_epochs,)),
-                    "critic/variance_norm": jnp.zeros((self.num_epochs,)),
-                    "alpha/total_loss": jnp.zeros((self.num_epochs,)),
-                    "alpha/value": jnp.zeros((self.num_epochs,)),
-                    "alpha/entropy_gap": jnp.zeros((self.num_epochs,)),
-                },
-            ),
+            lambda: (ts, mock_metrics),
         )
 
         # Update target network
