@@ -225,9 +225,7 @@ class SAC(
             else:
                 last_obs = ts.last_obs
 
-            actions = self.actor.apply(
-                ts.actor_ts.params, last_obs, rng_action, method="act"
-            )
+            actions = self.actor.apply(ts.actor_ts.params, last_obs, rng, method="act")
             return actions
 
         actions = sample_policy(rng_action)
@@ -282,7 +280,7 @@ class SAC(
                 )
                 entropy = -log_prob  # ty:ignore[unsupported-operator]
                 qs = self.vmap_critic(ts.critic_ts.params, mb.obs, action)
-                loss_pi = alpha * log_prob - qs.min(axis=0)  # ty:ignore[unsupported-operator]
+                loss_pi = alpha * log_prob - qs.min(axis=0)
             return loss_pi.mean(), (
                 log_prob,
                 {
@@ -339,7 +337,7 @@ class SAC(
                     method="action_log_prob",
                 )
                 qs = self.vmap_critic(ts.critic_target_params, mb.next_obs, action)
-                q_target = jnp.min(qs, axis=0) - alpha * log_prob  # ty:ignore[unsupported-operator]
+                q_target = jnp.min(qs, axis=0) - alpha * log_prob
                 qs = self.vmap_critic(params, mb.obs, mb.action)
 
             q_diff = jnp.abs(qs[0] - qs[1])
@@ -347,7 +345,7 @@ class SAC(
             losses = jax.vmap(lambda q: optax.l2_loss(q, target))(qs)
             return losses.sum(axis=0).mean(), {
                 "critic/log_prob": log_prob.mean(),  # ty:ignore[unresolved-attribute]
-                "critic/qs": qs.mean(),
+                "critic/qs": qs.mean(),  # ty:ignore[unresolved-attribute]
                 "critic/q_target": q_target.mean(),
                 "critic/q_diff": q_diff.mean(),
                 "critic/explained_variance": explained_variance(qs[0], target),
