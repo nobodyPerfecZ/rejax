@@ -39,7 +39,7 @@ class DQN(
             action = self.agent.apply(
                 ts.q_ts.params, obs, rng, epsilon=0.005, method="act"
             )
-            return jnp.squeeze(action)  # ty:ignore[invalid-argument-type]
+            return jnp.squeeze(action, axis=0)  # ty:ignore[invalid-argument-type]
 
         return act
 

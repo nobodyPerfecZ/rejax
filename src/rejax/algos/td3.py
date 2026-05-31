@@ -54,7 +54,7 @@ class TD3(
 
             obs = jnp.expand_dims(obs, 0)
             action = self.actor.apply(ts.actor_ts.params, obs)
-            return jnp.squeeze(action)  # ty:ignore[invalid-argument-type]
+            return jnp.squeeze(action, axis=0)  # ty:ignore[invalid-argument-type]
 
         return act
 

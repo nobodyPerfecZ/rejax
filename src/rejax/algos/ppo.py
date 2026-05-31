@@ -49,7 +49,7 @@ class PPO(OnPolicyMixin, NormalizeObservationsMixin, NormalizeRewardsMixin, Algo
 
             obs = jnp.expand_dims(obs, 0)
             action = self.actor.apply(ts.actor_ts.params, obs, rng, method="act")
-            return jnp.squeeze(action)  # ty:ignore[invalid-argument-type]
+            return jnp.squeeze(action, axis=0)  # ty:ignore[invalid-argument-type]
 
         return act
 
@@ -68,7 +68,7 @@ class PPO(OnPolicyMixin, NormalizeObservationsMixin, NormalizeRewardsMixin, Algo
     @classmethod
     def create_agent(cls, config, env, env_params):
         action_space = env.action_space(env_params)
-        discrete = isinstance(action_space, gymnax.environments.spaces.Discrete)  # ty:ignore[possibly-missing-attribute, possibly-missing-submodule]
+        discrete = isinstance(action_space, gymnax.environments.spaces.Discrete)  # ty:ignore[possibly-missing-submodule]
 
         agent_kwargs = config.pop("agent_kwargs", {})
         activation = agent_kwargs.pop("activation", "swish")
