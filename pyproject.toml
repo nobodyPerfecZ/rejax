@@ -13,7 +13,7 @@ dependencies = [
     "gymnax @ git+https://github.com/RobertTLange/gymnax@main",
     "jax>=0.4.34",
 ]
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 readme = "README.md"
 license = {text = "Apache-2.0"}
 keywords = [
@@ -40,7 +40,7 @@ compat = [
     "jumanji>=1.0.1",
     "gymnasium>=1.0.0",
     "kinetix-env>=2.0.0",
-    "playground>=0.2.0; python_version >= '3.11'",
+    "playground>=0.2.0",
 ]
 
 [build-system]
